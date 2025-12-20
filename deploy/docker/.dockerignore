@@ -1,0 +1,115 @@
+# Comprehensive .dockerignore for Rust projects
+
+# Build artifacts
+target/
+**/*.rs.bk
+*.pdb
+
+# Cargo files
+Cargo.lock
+**/.cargo/registry/
+**/.cargo/git/
+
+# IDE / Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+azure-pipelines.yml
+
+# Docker
+.dockerignore
+Dockerfile*
+docker-compose*.yml
+
+# Documentation
+*.md
+docs/
+LICENSE
+CONTRIBUTING.md
+
+# Test files
+tests/
+benches/
+examples/
+
+# Deployment
+deploy/
+k8s/
+helm/
+
+# Data directories
+data/
+*.db
+*.log
+*.sqlite
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+.directory
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.cache
+
+# Coverage
+coverage/
+*.profraw
+*.profdata
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Node (if any frontend)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Python (if any scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+
+# Rust-specific
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Keep only necessary files for build
+!Cargo.toml
+!rust-toolchain.toml
+!.cargo/config.toml
+!proto/**
+!crates/**
+!deploy/docker/scripts/entrypoint.sh

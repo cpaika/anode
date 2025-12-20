@@ -1,0 +1,32 @@
+[
+  {
+    "name": "anode-1-proxy",
+    "listen": "0.0.0.0:9100",
+    "upstream": "chaos-anode-1:9090",
+    "enabled": true
+  },
+  {
+    "name": "anode-2-proxy",
+    "listen": "0.0.0.0:9101",
+    "upstream": "chaos-anode-2:9090",
+    "enabled": true
+  },
+  {
+    "name": "anode-3-proxy",
+    "listen": "0.0.0.0:9102",
+    "upstream": "chaos-anode-3:9090",
+    "enabled": true
+  },
+  {
+    "name": "anode-4-proxy",
+    "listen": "0.0.0.0:9103",
+    "upstream": "chaos-anode-4:9090",
+    "enabled": true
+  },
+  {
+    "name": "anode-5-proxy",
+    "listen": "0.0.0.0:9104",
+    "upstream": "chaos-anode-5:9090",
+    "enabled": true
+  }
+]

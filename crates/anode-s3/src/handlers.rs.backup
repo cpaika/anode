@@ -1,0 +1,717 @@
+// S3 API request handlers
+// This module contains handlers for S3 operations
+
+use crate::error::{S3Error, S3Result};
+use crate::multipart::{CompletePart, MultipartManager};
+use crate::xml::{
+    self, BucketInfo, CompleteMultipartResult, DeleteResult, ListObjectsResult, ObjectInfo,
+};
+use anode_protocol::ObjectKey;
+use anode_storage::StorageEngine;
+use axum::{
+    body::Body,
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+};
+use bytes::Bytes;
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+/// Application state shared across handlers
+#[derive(Clone)]
+pub struct AppState {
+    pub storage: Arc<StorageEngine>,
+    pub buckets: Arc<tokio::sync::RwLock<HashMap<String, BucketMetadata>>>,
+    pub multipart: Arc<MultipartManager>,
+}
+
+/// Metadata about a bucket
+#[derive(Clone, Debug)]
+pub struct BucketMetadata {
+    pub name: String,
+    pub creation_date: u64,
+}
+
+/// Query parameters for ListObjectsV2
+#[derive(Deserialize, Debug)]
+pub struct ListParams {
+    #[serde(rename = "list-type")]
+    list_type: Option<u32>,
+    prefix: Option<String>,
+    delimiter: Option<String>,
+    #[serde(rename = "max-keys")]
+    max_keys: Option<u32>,
+    #[serde(rename = "continuation-token")]
+    continuation_token: Option<String>,
+    #[serde(rename = "start-after")]
+    start_after: Option<String>,
+}
+
+/// Query parameters for multipart upload part operations
+#[derive(Deserialize, Debug)]
+pub struct PartParams {
+    #[serde(rename = "partNumber")]
+    part_number: u32,
+    #[serde(rename = "uploadId")]
+    upload_id: String,
+}
+
+/// Query parameters for upload operations
+#[derive(Deserialize, Debug)]
+pub struct UploadParams {
+    #[serde(rename = "uploadId")]
+    upload_id: Option<String>,
+    uploads: Option<String>,
+}
+
+/// Query parameters for list parts
+#[derive(Deserialize, Debug)]
+pub struct ListPartsParams {
+    #[serde(rename = "uploadId")]
+    upload_id: String,
+    #[serde(rename = "max-parts")]
+    max_parts: Option<u32>,
+    #[serde(rename = "part-number-marker")]
+    part_number_marker: Option<u32>,
+}
+
+/// Query parameters for list multipart uploads
+#[derive(Deserialize, Debug)]
+pub struct ListUploadsParams {
+    uploads: Option<String>,
+    prefix: Option<String>,
+    #[serde(rename = "max-uploads")]
+    max_uploads: Option<u32>,
+    #[serde(rename = "key-marker")]
+    key_marker: Option<String>,
+    #[serde(rename = "upload-id-marker")]
+    upload_id_marker: Option<String>,
+}
+
+// ============================================================================
+// Bucket Operations
+// ============================================================================
+
+/// Creates a new bucket
+pub async fn create_bucket(
+    State(state): State<AppState>,
+    Path(bucket): Path<String>,
+) -> S3Result<Response> {
+    // Validate bucket name
+    validate_bucket_name(&bucket)?;
+
+    let mut buckets = state.buckets.write().await;
+
+    // Check if bucket already exists
+    if buckets.contains_key(&bucket) {
+        return Err(S3Error::BucketAlreadyExists(bucket));
+    }
+
+    // Create bucket metadata
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    buckets.insert(
+        bucket.clone(),
+        BucketMetadata {
+            name: bucket,
+            creation_date: now,
+        },
+    );
+
+    Ok((StatusCode::OK, [("Content-Length", "0")]).into_response())
+}
+
+/// Deletes a bucket
+pub async fn delete_bucket(
+    State(state): State<AppState>,
+    Path(bucket): Path<String>,
+) -> S3Result<Response> {
+    let mut buckets = state.buckets.write().await;
+
+    // Check if bucket exists
+    if !buckets.contains_key(&bucket) {
+        return Err(S3Error::NoSuchBucket(bucket));
+    }
+
+    // Check if bucket is empty
+    let objects = state
+        .storage
+        .list_objects(&bucket, None)
+        .await
+        .map_err(|_| S3Error::InternalError("Failed to list objects".to_string()))?;
+
+    if !objects.is_empty() {
+        return Err(S3Error::BucketNotEmpty(bucket));
+    }
+
+    buckets.remove(&bucket);
+
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// Checks if a bucket exists (HEAD bucket)
+pub async fn head_bucket(
+    State(state): State<AppState>,
+    Path(bucket): Path<String>,
+) -> S3Result<Response> {
+    let buckets = state.buckets.read().await;
+
+    if !buckets.contains_key(&bucket) {
+        return Err(S3Error::NoSuchBucket(bucket));
+    }
+
+    Ok(StatusCode::OK.into_response())
+}
+
+/// Lists all buckets
+pub async fn list_buckets(State(state): State<AppState>) -> S3Result<Response> {
+    let buckets = state.buckets.read().await;
+
+    let bucket_list: Vec<BucketInfo> = buckets
+        .values()
+        .map(|b| BucketInfo {
+            name: b.name.clone(),
+            creation_date: xml::format_timestamp(b.creation_date),
+        })
+        .collect();
+
+    let xml = xml::list_buckets_xml(&bucket_list);
+
+    Ok((
+        StatusCode::OK,
+        [("Content-Type", "application/xml")],
+        xml,
+    )
+        .into_response())
+}
+
+// ============================================================================
+// Object Operations
+// ============================================================================
+
+/// Uploads an object (PUT object)
+pub async fn put_object(
+    State(state): State<AppState>,
+    Path((bucket, key)): Path<(String, String)>,
+    headers: HeaderMap,
+    body: Body,
+) -> S3Result<Response> {
+    // Check if bucket exists
+    {
+        let buckets = state.buckets.read().await;
+        if !buckets.contains_key(&bucket) {
+            return Err(S3Error::NoSuchBucket(bucket));
+        }
+    }
+
+    // Read the body
+    let data = axum::body::to_bytes(body, usize::MAX)
+        .await
+        .map_err(|e| S3Error::InternalError(format!("Failed to read body: {}", e)))?;
+
+    // Extract metadata from headers
+    let mut metadata = HashMap::new();
+    for (name, value) in headers.iter() {
+        if let Some(meta_key) = name.as_str().strip_prefix("x-amz-meta-") {
+            if let Ok(value_str) = value.to_str() {
+                metadata.insert(meta_key.to_string(), value_str.to_string());
+            }
+        }
+    }
+
+    // Store the object
+    let object_key = ObjectKey::new(bucket, key);
+    let manifest = state
+        .storage
+        .put_object(object_key, data, Some(metadata))
+        .await?;
+
+    // Return ETag
+    let etag = format!("\"{}\"", manifest.etag);
+    Ok((
+        StatusCode::OK,
+        [("ETag", etag.as_str()), ("Content-Length", "0")],
+    )
+        .into_response())
+}
+
+/// Downloads an object (GET object)
+pub async fn get_object(
+    State(state): State<AppState>,
+    Path((bucket, key)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> S3Result<Response> {
+    // Check if bucket exists
+    {
+        let buckets = state.buckets.read().await;
+        if !buckets.contains_key(&bucket) {
+            return Err(S3Error::NoSuchBucket(bucket));
+        }
+    }
+
+    // Retrieve the object
+    let object_key = ObjectKey::new(bucket, key.clone());
+    let data = state.storage.get_object(&object_key).await.map_err(|e| {
+        if matches!(e, anode_storage::StorageError::NotFound(_)) {
+            S3Error::NoSuchKey(key)
+        } else {
+            S3Error::StorageError(e)
+        }
+    })?;
+
+    // TODO: Handle range requests, conditional requests, etc.
+
+    Ok((
+        StatusCode::OK,
+        [
+            ("Content-Type", "application/octet-stream"),
+            ("Content-Length", &data.len().to_string()),
+        ],
+        data,
+    )
+        .into_response())
+}
+
+/// Checks if an object exists (HEAD object)
+pub async fn head_object(
+    State(state): State<AppState>,
+    Path((bucket, key)): Path<(String, String)>,
+) -> S3Result<Response> {
+    // Check if bucket exists
+    {
+        let buckets = state.buckets.read().await;
+        if !buckets.contains_key(&bucket) {
+            return Err(S3Error::NoSuchBucket(bucket));
+        }
+    }
+
+    // Check if object exists
+    let object_key = ObjectKey::new(bucket, key.clone());
+    let data = state.storage.get_object(&object_key).await.map_err(|e| {
+        if matches!(e, anode_storage::StorageError::NotFound(_)) {
+            S3Error::NoSuchKey(key)
+        } else {
+            S3Error::StorageError(e)
+        }
+    })?;
+
+    Ok((
+        StatusCode::OK,
+        [("Content-Length", &data.len().to_string())],
+    )
+        .into_response())
+}
+
+/// Deletes an object
+pub async fn delete_object(
+    State(state): State<AppState>,
+    Path((bucket, key)): Path<(String, String)>,
+) -> S3Result<Response> {
+    // Check if bucket exists
+    {
+        let buckets = state.buckets.read().await;
+        if !buckets.contains_key(&bucket) {
+            return Err(S3Error::NoSuchBucket(bucket));
+        }
+    }
+
+    // Delete the object (S3 doesn't return error if object doesn't exist)
+    let object_key = ObjectKey::new(bucket, key);
+    let _ = state.storage.delete_object(&object_key).await;
+
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// Copies an object
+pub async fn copy_object(
+    State(state): State<AppState>,
+    Path((dest_bucket, dest_key)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> S3Result<Response> {
+    // Extract source bucket and key from x-amz-copy-source header
+    let copy_source = headers
+        .get("x-amz-copy-source")
+        .and_then(|h| h.to_str().ok())
+        .ok_or_else(|| S3Error::InvalidRequest("Missing x-amz-copy-source header".to_string()))?;
+
+    // Parse source (format: /bucket/key or bucket/key)
+    let source = copy_source.trim_start_matches('/');
+    let (src_bucket, src_key) = source
+        .split_once('/')
+        .ok_or_else(|| S3Error::InvalidRequest("Invalid copy source format".to_string()))?;
+
+    // Check if both buckets exist
+    {
+        let buckets = state.buckets.read().await;
+        if !buckets.contains_key(src_bucket) {
+            return Err(S3Error::NoSuchBucket(src_bucket.to_string()));
+        }
+        if !buckets.contains_key(&dest_bucket) {
+            return Err(S3Error::NoSuchBucket(dest_bucket));
+        }
+    }
+
+    // Get source object
+    let src_object_key = ObjectKey::new(src_bucket, src_key);
+    let data = state
+        .storage
+        .get_object(&src_object_key)
+        .await
+        .map_err(|e| {
+            if matches!(e, anode_storage::StorageError::NotFound(_)) {
+                S3Error::NoSuchKey(src_key.to_string())
+            } else {
+                S3Error::StorageError(e)
+            }
+        })?;
+
+    // Store the copy
+    let dest_object_key = ObjectKey::new(dest_bucket, dest_key);
+    let manifest = state
+        .storage
+        .put_object(dest_object_key, data, None)
+        .await?;
+
+    let etag = format!("\"{}\"", manifest.etag);
+    let last_modified = xml::format_timestamp(manifest.modified_at);
+    let xml = xml::copy_object_xml(&etag, &last_modified);
+
+    Ok((
+        StatusCode::OK,
+        [("Content-Type", "application/xml")],
+        xml,
+    )
+        .into_response())
+}
+
+/// Lists objects in a bucket (ListObjectsV2)
+pub async fn list_objects_v2(
+    State(state): State<AppState>,
+    Path(bucket): Path<String>,
+    Query(params): Query<ListParams>,
+) -> S3Result<Response> {
+    // Check if bucket exists
+    {
+        let buckets = state.buckets.read().await;
+        if !buckets.contains_key(&bucket) {
+            return Err(S3Error::NoSuchBucket(bucket));
+        }
+    }
+
+    // Get objects from storage
+    let manifests = state
+        .storage
+        .list_objects(&bucket, params.prefix.as_deref())
+        .await?;
+
+    // Convert to ObjectInfo
+    let mut objects: Vec<ObjectInfo> = manifests
+        .iter()
+        .map(xml::object_manifest_to_info)
+        .collect();
+
+    // Apply max-keys limit
+    let max_keys = params.max_keys.unwrap_or(1000).min(1000);
+    let is_truncated = objects.len() > max_keys as usize;
+    objects.truncate(max_keys as usize);
+
+    let result = ListObjectsResult {
+        name: bucket,
+        prefix: params.prefix,
+        max_keys,
+        is_truncated,
+        key_count: objects.len() as u32,
+        contents: objects,
+        continuation_token: params.continuation_token,
+        next_continuation_token: if is_truncated {
+            Some("next-token".to_string()) // TODO: Implement proper pagination
+        } else {
+            None
+        },
+    };
+
+    let xml = xml::list_objects_v2_xml(&result);
+
+    Ok((
+        StatusCode::OK,
+        [("Content-Type", "application/xml")],
+        xml,
+    )
+        .into_response())
+}
+
+// ============================================================================
+// Multipart Upload Operations
+// ============================================================================
+
+/// Initiates a multipart upload
+pub async fn create_multipart_upload(
+    State(state): State<AppState>,
+    Path((bucket, key)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> S3Result<Response> {
+    // Check if bucket exists
+    {
+        let buckets = state.buckets.read().await;
+        if !buckets.contains_key(&bucket) {
+            return Err(S3Error::NoSuchBucket(bucket.clone()));
+        }
+    }
+
+    // Extract metadata from headers
+    let mut metadata = HashMap::new();
+    for (name, value) in headers.iter() {
+        if let Some(meta_key) = name.as_str().strip_prefix("x-amz-meta-") {
+            if let Ok(value_str) = value.to_str() {
+                metadata.insert(meta_key.to_string(), value_str.to_string());
+            }
+        }
+    }
+
+    // Create multipart upload
+    let upload_id = state.multipart.create_upload(&bucket, &key, metadata).await?;
+
+    let xml = xml::initiate_multipart_xml(&bucket, &key, &upload_id);
+
+    Ok((
+        StatusCode::OK,
+        [("Content-Type", "application/xml")],
+        xml,
+    )
+        .into_response())
+}
+
+/// Uploads a part for a multipart upload
+pub async fn upload_part(
+    State(state): State<AppState>,
+    Path((bucket, key)): Path<(String, String)>,
+    Query(params): Query<PartParams>,
+    body: Body,
+) -> S3Result<Response> {
+    // Read the body
+    let data = axum::body::to_bytes(body, usize::MAX)
+        .await
+        .map_err(|e| S3Error::InternalError(format!("Failed to read body: {}", e)))?;
+
+    // Upload the part
+    let part = state
+        .multipart
+        .upload_part(&params.upload_id, params.part_number, data)
+        .await?;
+
+    let etag = format!("\"{}\"", part.etag);
+
+    Ok((StatusCode::OK, [("ETag", etag.as_str())]).into_response())
+}
+
+/// Completes a multipart upload
+pub async fn complete_multipart_upload(
+    State(state): State<AppState>,
+    Path((bucket, key)): Path<(String, String)>,
+    Query(params): Query<UploadParams>,
+    body: Body,
+) -> S3Result<Response> {
+    let upload_id = params
+        .upload_id
+        .ok_or_else(|| S3Error::InvalidRequest("Missing uploadId parameter".to_string()))?;
+
+    // Parse the XML body to get the parts list
+    let body_bytes = axum::body::to_bytes(body, usize::MAX)
+        .await
+        .map_err(|e| S3Error::InternalError(format!("Failed to read body: {}", e)))?;
+
+    let parts = xml::parse_complete_multipart_upload(&body_bytes)?;
+
+    // Complete the multipart upload
+    let manifest = state.multipart.complete_upload(&upload_id, parts).await?;
+
+    let etag = format!("\"{}\"", hex::encode(manifest.checksum));
+    let location = format!("/{}/{}", bucket, key);
+
+    let result = CompleteMultipartResult {
+        bucket: bucket.clone(),
+        key: key.clone(),
+        etag: etag.clone(),
+        location,
+    };
+
+    let xml = xml::complete_multipart_xml(&result);
+
+    Ok((
+        StatusCode::OK,
+        [("Content-Type", "application/xml"), ("ETag", &etag)],
+        xml,
+    )
+        .into_response())
+}
+
+/// Aborts a multipart upload
+pub async fn abort_multipart_upload(
+    State(state): State<AppState>,
+    Path((bucket, key)): Path<(String, String)>,
+    Query(params): Query<UploadParams>,
+) -> S3Result<Response> {
+    let upload_id = params
+        .upload_id
+        .ok_or_else(|| S3Error::InvalidRequest("Missing uploadId parameter".to_string()))?;
+
+    // Abort the multipart upload
+    state.multipart.abort_upload(&upload_id).await?;
+
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// Lists parts of a multipart upload
+pub async fn list_parts(
+    State(state): State<AppState>,
+    Path((bucket, key)): Path<(String, String)>,
+    Query(params): Query<ListPartsParams>,
+) -> S3Result<Response> {
+    // Check if bucket exists
+    {
+        let buckets = state.buckets.read().await;
+        if !buckets.contains_key(&bucket) {
+            return Err(S3Error::NoSuchBucket(bucket.clone()));
+        }
+    }
+
+    // List parts
+    let result = state
+        .multipart
+        .list_parts(
+            &params.upload_id,
+            params.max_parts,
+            params.part_number_marker,
+        )
+        .await?;
+
+    let xml = xml::list_parts_xml(&result);
+
+    Ok((
+        StatusCode::OK,
+        [("Content-Type", "application/xml")],
+        xml,
+    )
+        .into_response())
+}
+
+/// Lists multipart uploads for a bucket
+pub async fn list_multipart_uploads(
+    State(state): State<AppState>,
+    Path(bucket): Path<String>,
+    Query(params): Query<ListUploadsParams>,
+) -> S3Result<Response> {
+    // Check if bucket exists
+    {
+        let buckets = state.buckets.read().await;
+        if !buckets.contains_key(&bucket) {
+            return Err(S3Error::NoSuchBucket(bucket.clone()));
+        }
+    }
+
+    // List uploads
+    let result = state
+        .multipart
+        .list_uploads(
+            &bucket,
+            params.prefix.as_deref(),
+            params.max_uploads,
+            params.key_marker.as_deref(),
+            params.upload_id_marker.as_deref(),
+        )
+        .await?;
+
+    let xml = xml::list_multipart_uploads_xml(&result);
+
+    Ok((
+        StatusCode::OK,
+        [("Content-Type", "application/xml")],
+        xml,
+    )
+        .into_response())
+}
+
+/// Deletes multiple objects (POST with XML body)
+pub async fn delete_objects(
+    State(state): State<AppState>,
+    Path(bucket): Path<String>,
+    body: Body,
+) -> S3Result<Response> {
+    // Check if bucket exists
+    {
+        let buckets = state.buckets.read().await;
+        if !buckets.contains_key(&bucket) {
+            return Err(S3Error::NoSuchBucket(bucket));
+        }
+    }
+
+    // Parse XML body to get keys to delete
+    // For simplicity, we'll just return success for now
+    // TODO: Parse XML and delete each object
+
+    let results = vec![]; // Empty for now
+    let xml = xml::delete_objects_xml(&results);
+
+    Ok((
+        StatusCode::OK,
+        [("Content-Type", "application/xml")],
+        xml,
+    )
+        .into_response())
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Validates a bucket name according to S3 rules
+fn validate_bucket_name(name: &str) -> S3Result<()> {
+    if name.len() < 3 || name.len() > 63 {
+        return Err(S3Error::InvalidBucketName(
+            "Bucket name must be between 3 and 63 characters".to_string(),
+        ));
+    }
+
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
+    {
+        return Err(S3Error::InvalidBucketName(
+            "Bucket name can only contain lowercase letters, numbers, hyphens, and periods"
+                .to_string(),
+        ));
+    }
+
+    if name.starts_with('-') || name.ends_with('-') {
+        return Err(S3Error::InvalidBucketName(
+            "Bucket name cannot start or end with a hyphen".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_bucket_name() {
+        assert!(validate_bucket_name("my-bucket").is_ok());
+        assert!(validate_bucket_name("my.bucket.123").is_ok());
+
+        assert!(validate_bucket_name("ab").is_err()); // Too short
+        assert!(validate_bucket_name(&"a".repeat(64)).is_err()); // Too long
+        assert!(validate_bucket_name("MyBucket").is_err()); // Uppercase
+        assert!(validate_bucket_name("-bucket").is_err()); // Starts with hyphen
+        assert!(validate_bucket_name("bucket-").is_err()); // Ends with hyphen
+    }
+
+}

@@ -1,0 +1,85 @@
+[build]
+# Use all available CPU cores for compilation
+jobs = -1
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# macOS doesn't support lld linker
+# [target.x86_64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# [target.aarch64-apple-darwin]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# Lint configuration
+[lint.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+rust_2018_idioms = "warn"
+
+[lint.clippy]
+# Pedantic lints
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
+
+# Restriction lints
+clone_on_ref_ptr = "warn"
+create_dir = "warn"
+dbg_macro = "warn"
+empty_structs_with_brackets = "warn"
+exit = "warn"
+filetype_is_file = "warn"
+float_cmp_const = "warn"
+get_unwrap = "warn"
+if_then_some_else_none = "warn"
+indexing_slicing = "warn"
+let_underscore_must_use = "warn"
+lossy_float_literal = "warn"
+map_err_ignore = "warn"
+mem_forget = "warn"
+missing_docs_in_private_items = "warn"
+multiple_inherent_impl = "warn"
+panic = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+str_to_string = "warn"
+string_add = "warn"
+string_to_string = "warn"
+todo = "warn"
+unimplemented = "warn"
+unreachable = "warn"
+unwrap_used = "warn"
+verbose_file_reads = "warn"
+
+# Performance lints
+perf = "warn"
+
+# Allow some pedantic lints
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+# Cargo lints
+[lint.cargo]
+all = "warn"
+
+[alias]
+# Common aliases
+b = "build"
+c = "check"
+t = "test"
+r = "run"
+f = "fmt"
+l = "clippy"
+
+# CI-like checks
+ci = "clippy -- -D warnings"
+ci-test = "test --all-features"
+ci-fmt = "fmt --all -- --check"

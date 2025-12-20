@@ -1,0 +1,283 @@
+# Prometheus alerting rules for Anode
+groups:
+  # Node availability and health alerts
+  - name: anode_availability
+    interval: 30s
+    rules:
+      - alert: AnodeNodeDown
+        expr: up{job="anode"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: anode
+        annotations:
+          summary: "Anode node {{ $labels.instance }} is down"
+          description: "Anode node {{ $labels.instance }} has been down for more than 1 minute."
+
+      - alert: AnodeClusterQuorumLost
+        expr: count(up{job="anode"} == 1) < 2
+        for: 30s
+        labels:
+          severity: critical
+          component: anode
+        annotations:
+          summary: "Anode cluster has lost quorum"
+          description: "Less than 2 Anode nodes are available. Cluster cannot maintain consensus."
+
+      - alert: AnodeNodeUnhealthy
+        expr: anode_cluster_healthy_nodes < anode_cluster_nodes_total
+        for: 2m
+        labels:
+          severity: warning
+          component: anode
+        annotations:
+          summary: "Anode cluster has unhealthy nodes"
+          description: "{{ $value }} nodes in the Anode cluster are unhealthy."
+
+  # Raft consensus alerts
+  - name: anode_raft
+    interval: 30s
+    rules:
+      - alert: AnodeNoLeader
+        expr: sum(anode_raft_is_leader) == 0
+        for: 30s
+        labels:
+          severity: critical
+          component: raft
+        annotations:
+          summary: "Anode cluster has no leader"
+          description: "The Anode cluster has no elected leader for more than 30 seconds."
+
+      - alert: AnodeMultipleLeaders
+        expr: sum(anode_raft_is_leader) > 1
+        for: 10s
+        labels:
+          severity: critical
+          component: raft
+        annotations:
+          summary: "Anode cluster has multiple leaders"
+          description: "The Anode cluster has {{ $value }} leaders (split brain detected)."
+
+      - alert: AnodeRaftProposalFailureRateHigh
+        expr: rate(anode_raft_proposal_failures_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          component: raft
+        annotations:
+          summary: "High Raft proposal failure rate on {{ $labels.instance }}"
+          description: "Raft proposal failure rate is {{ $value | humanize }} per second on {{ $labels.instance }}."
+
+      - alert: AnodeRaftLeaderChangesFrequent
+        expr: rate(anode_raft_leader_changes_total[10m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: raft
+        annotations:
+          summary: "Frequent Raft leader changes"
+          description: "Raft leader is changing {{ $value | humanize }} times per second, indicating instability."
+
+  # Replication and cluster health alerts
+  - name: anode_replication
+    interval: 30s
+    rules:
+      - alert: AnodeReplicationLagHigh
+        expr: anode_cluster_replication_lag_seconds > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: replication
+        annotations:
+          summary: "High replication lag to peer {{ $labels.peer_id }}"
+          description: "Replication lag to peer {{ $labels.peer_id }} is {{ $value | humanize }}s."
+
+      - alert: AnodeReplicationLagCritical
+        expr: anode_cluster_replication_lag_seconds > 60
+        for: 2m
+        labels:
+          severity: critical
+          component: replication
+        annotations:
+          summary: "Critical replication lag to peer {{ $labels.peer_id }}"
+          description: "Replication lag to peer {{ $labels.peer_id }} is {{ $value | humanize }}s (critical threshold exceeded)."
+
+  # Performance alerts
+  - name: anode_performance
+    interval: 30s
+    rules:
+      - alert: AnodeHighRequestLatency
+        expr: histogram_quantile(0.95, rate(anode_request_duration_seconds_bucket[5m])) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "High request latency on {{ $labels.instance }}"
+          description: "95th percentile request latency is {{ $value | humanize }}s on {{ $labels.instance }}."
+
+      - alert: AnodeHighRequestLatencyCritical
+        expr: histogram_quantile(0.95, rate(anode_request_duration_seconds_bucket[5m])) > 5.0
+        for: 2m
+        labels:
+          severity: critical
+          component: performance
+        annotations:
+          summary: "Critical request latency on {{ $labels.instance }}"
+          description: "95th percentile request latency is {{ $value | humanize }}s on {{ $labels.instance }}."
+
+      - alert: AnodeHighStorageOperationLatency
+        expr: histogram_quantile(0.95, rate(anode_operation_duration_seconds_bucket[5m])) > 2.0
+        for: 5m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "High storage operation latency on {{ $labels.instance }}"
+          description: "95th percentile storage operation latency is {{ $value | humanize }}s for {{ $labels.operation }}."
+
+      - alert: AnodeHighErrorRate
+        expr: rate(anode_operation_errors_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "High error rate on {{ $labels.instance }}"
+          description: "Error rate is {{ $value | humanize }} per second for {{ $labels.operation }} ({{ $labels.error_type }})."
+
+  # Storage and capacity alerts
+  - name: anode_capacity
+    interval: 60s
+    rules:
+      - alert: AnodeDiskSpaceLow
+        expr: anode_disk_available_bytes / anode_disk_usage_bytes < 0.2
+        for: 10m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Disk space on {{ $labels.path }} is below 20% on {{ $labels.instance }}."
+
+      - alert: AnodeDiskSpaceCritical
+        expr: anode_disk_available_bytes / anode_disk_usage_bytes < 0.1
+        for: 5m
+        labels:
+          severity: critical
+          component: storage
+        annotations:
+          summary: "Critical disk space on {{ $labels.instance }}"
+          description: "Disk space on {{ $labels.path }} is below 10% on {{ $labels.instance }}."
+
+      - alert: AnodeStorageGrowthRateHigh
+        expr: predict_linear(anode_storage_bytes_total[1h], 24 * 3600) > anode_disk_available_bytes * 0.8
+        for: 30m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "High storage growth rate"
+          description: "At current growth rate, storage will be 80% full in 24 hours on {{ $labels.instance }}."
+
+      - alert: AnodeMemoryUsageHigh
+        expr: anode_memory_usage_bytes / (1024 * 1024 * 1024) > 8
+        for: 10m
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value | humanize }}GB on {{ $labels.instance }}."
+
+  # Parquet cache alerts
+  - name: anode_parquet
+    interval: 30s
+    rules:
+      - alert: AnodeParquetCacheHitRateLow
+        expr: rate(anode_parquet_cache_hits_total[5m]) / (rate(anode_parquet_cache_hits_total[5m]) + rate(anode_parquet_cache_misses_total[5m])) < 0.5
+        for: 10m
+        labels:
+          severity: warning
+          component: parquet
+        annotations:
+          summary: "Low Parquet cache hit rate on {{ $labels.instance }}"
+          description: "Parquet cache hit rate is {{ $value | humanizePercentage }} on {{ $labels.instance }}."
+
+      - alert: AnodeParquetQueryLatencyHigh
+        expr: histogram_quantile(0.95, rate(anode_parquet_query_duration_seconds_bucket[5m])) > 5.0
+        for: 5m
+        labels:
+          severity: warning
+          component: parquet
+        annotations:
+          summary: "High Parquet query latency on {{ $labels.instance }}"
+          description: "95th percentile Parquet query latency is {{ $value | humanize }}s for {{ $labels.query_type }}."
+
+      - alert: AnodeParquetCacheEvictionsHigh
+        expr: rate(anode_parquet_cache_evictions_total[5m]) > 10
+        for: 10m
+        labels:
+          severity: info
+          component: parquet
+        annotations:
+          summary: "High Parquet cache eviction rate on {{ $labels.instance }}"
+          description: "Parquet cache eviction rate is {{ $value | humanize }} per second. Consider increasing cache size."
+
+  # Network and connectivity alerts
+  - name: anode_network
+    interval: 30s
+    rules:
+      - alert: AnodeHighPeerRTT
+        expr: anode_cluster_peer_rtt_seconds > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "High RTT to peer {{ $labels.peer_id }}"
+          description: "Round-trip time to peer {{ $labels.peer_id }} is {{ $value | humanize }}s."
+
+      - alert: AnodeNetworkBandwidthHigh
+        expr: rate(anode_network_bytes_sent_total[5m]) > 100 * 1024 * 1024
+        for: 10m
+        labels:
+          severity: info
+          component: network
+        annotations:
+          summary: "High network bandwidth usage on {{ $labels.instance }}"
+          description: "Network send rate is {{ $value | humanize }}B/s on {{ $labels.instance }} ({{ $labels.protocol }})."
+
+      - alert: AnodeConnectionsHigh
+        expr: anode_active_connections > 1000
+        for: 5m
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "High connection count on {{ $labels.instance }}"
+          description: "{{ $labels.instance }} has {{ $value }} active {{ $labels.protocol }} connections."
+
+  # Multipart upload alerts
+  - name: anode_multipart
+    interval: 30s
+    rules:
+      - alert: AnodeMultipartUploadsStalled
+        expr: anode_multipart_uploads_active > 0 and rate(anode_multipart_parts_total[10m]) == 0
+        for: 30m
+        labels:
+          severity: warning
+          component: storage
+        annotations:
+          summary: "Stalled multipart uploads on {{ $labels.instance }}"
+          description: "{{ $value }} multipart uploads appear to be stalled on {{ $labels.instance }}."
+
+      - alert: AnodeMultipartUploadLatencyHigh
+        expr: histogram_quantile(0.95, rate(anode_multipart_upload_duration_seconds_bucket[10m])) > 3600
+        for: 10m
+        labels:
+          severity: info
+          component: storage
+        annotations:
+          summary: "High multipart upload latency on {{ $labels.instance }}"
+          description: "95th percentile multipart upload duration is {{ $value | humanizeDuration }} on {{ $labels.instance }}."

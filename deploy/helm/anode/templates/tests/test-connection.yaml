@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "anode.fullname" . }}-test-connection"
+  labels:
+    {{- include "anode.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+  - name: test-s3-health
+    image: curlimages/curl:latest
+    command:
+    - /bin/sh
+    - -c
+    - |
+      set -e
+      echo "Testing S3 API health endpoint..."
+      curl -f -s http://{{ include "anode.fullname" . }}:{{ .Values.service.s3Port }}/health || exit 1
+      echo "S3 API health check passed!"
+
+  - name: test-admin-health
+    image: curlimages/curl:latest
+    command:
+    - /bin/sh
+    - -c
+    - |
+      set -e
+      echo "Testing Admin API health endpoint..."
+      curl -f -s http://{{ include "anode.fullname" . }}:{{ .Values.service.adminPort }}/health/ready || exit 1
+      echo "Admin API health check passed!"
+
+  - name: test-metrics
+    image: curlimages/curl:latest
+    command:
+    - /bin/sh
+    - -c
+    - |
+      set -e
+      echo "Testing metrics endpoint..."
+      curl -f -s http://{{ include "anode.fullname" . }}:{{ .Values.service.adminPort }}{{ .Values.config.metrics.path }} | grep -q "anode_" || exit 1
+      echo "Metrics endpoint check passed!"

@@ -1,0 +1,198 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Anode Helm Chart Values",
+  "type": "object",
+  "required": ["replicaCount", "image", "service"],
+  "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of anode replicas. Should be odd for Raft quorum (3, 5, 7)"
+    },
+    "image": {
+      "type": "object",
+      "required": ["repository", "pullPolicy"],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "description": "Docker image repository"
+        },
+        "tag": {
+          "type": "string",
+          "description": "Docker image tag"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"],
+          "description": "Image pull policy"
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "required": ["type", "s3Port", "adminPort", "grpcPort"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+          "description": "Kubernetes service type"
+        },
+        "s3Port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "S3 API port"
+        },
+        "adminPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Admin API port"
+        },
+        "grpcPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "gRPC port for inter-node communication"
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable persistent storage"
+        },
+        "storageClass": {
+          "type": "string",
+          "description": "Storage class name"
+        },
+        "size": {
+          "type": "string",
+          "pattern": "^[0-9]+(Mi|Gi|Ti)$",
+          "description": "Size of persistent volume"
+        },
+        "accessModes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["ReadWriteOnce", "ReadOnlyMany", "ReadWriteMany"]
+          }
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "limits": {
+          "type": "object",
+          "properties": {
+            "cpu": {
+              "type": "string",
+              "pattern": "^[0-9]+(m|)$"
+            },
+            "memory": {
+              "type": "string",
+              "pattern": "^[0-9]+(Mi|Gi)$"
+            }
+          }
+        },
+        "requests": {
+          "type": "object",
+          "properties": {
+            "cpu": {
+              "type": "string",
+              "pattern": "^[0-9]+(m|)$"
+            },
+            "memory": {
+              "type": "string",
+              "pattern": "^[0-9]+(Mi|Gi)$"
+            }
+          }
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "cluster": {
+          "type": "object",
+          "properties": {
+            "placementGroups": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Number of placement groups"
+            },
+            "replicationFactor": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5,
+              "description": "Replication factor"
+            }
+          }
+        },
+        "storage": {
+          "type": "object",
+          "properties": {
+            "chunkSize": {
+              "type": "string",
+              "pattern": "^[0-9]+(KB|MB|GB)$",
+              "description": "Chunk size for object splitting"
+            },
+            "dataDir": {
+              "type": "string",
+              "description": "Data directory path"
+            }
+          }
+        },
+        "parquet": {
+          "type": "object",
+          "properties": {
+            "cacheEnabled": {
+              "type": "boolean",
+              "description": "Enable parquet metadata caching"
+            },
+            "cacheSizeMb": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Parquet cache size in MB"
+            }
+          }
+        }
+      }
+    },
+    "monitoring": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable monitoring"
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Create Prometheus ServiceMonitor"
+            }
+          }
+        }
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable Pod Disruption Budget"
+        },
+        "minAvailable": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum available pods"
+        }
+      }
+    }
+  }
+}

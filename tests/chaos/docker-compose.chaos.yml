@@ -1,0 +1,219 @@
+version: '3.8'
+
+# Docker Compose configuration for chaos testing with toxiproxy
+# Provides network chaos injection capabilities for distributed testing
+
+services:
+  # Toxiproxy service for network chaos injection
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.8.0
+    ports:
+      - "8474:8474"  # API port
+      - "20000-20010:20000-20010"  # Proxy ports
+    networks:
+      - chaos-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8474/version"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  # Anode node 1 (bootstrap)
+  anode-1:
+    image: anode:latest
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    environment:
+      - NODE_ID=1
+      - S3_PORT=9001
+      - GRPC_PORT=10001
+      - ADMIN_PORT=11001
+      - BOOTSTRAP=true
+      - DATA_DIR=/data
+    volumes:
+      - anode-1-data:/data
+    ports:
+      - "9001:9001"
+      - "10001:10001"
+      - "11001:11001"
+    networks:
+      - chaos-net
+    depends_on:
+      - toxiproxy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11001/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  # Anode node 2
+  anode-2:
+    image: anode:latest
+    environment:
+      - NODE_ID=2
+      - S3_PORT=9002
+      - GRPC_PORT=10002
+      - ADMIN_PORT=11002
+      - BOOTSTRAP=false
+      - PEERS=anode-1:10001
+      - DATA_DIR=/data
+    volumes:
+      - anode-2-data:/data
+    ports:
+      - "9002:9002"
+      - "10002:10002"
+      - "11002:11002"
+    networks:
+      - chaos-net
+    depends_on:
+      - anode-1
+      - toxiproxy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11002/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  # Anode node 3
+  anode-3:
+    image: anode:latest
+    environment:
+      - NODE_ID=3
+      - S3_PORT=9003
+      - GRPC_PORT=10003
+      - ADMIN_PORT=11003
+      - BOOTSTRAP=false
+      - PEERS=anode-1:10001
+      - DATA_DIR=/data
+    volumes:
+      - anode-3-data:/data
+    ports:
+      - "9003:9003"
+      - "10003:10003"
+      - "11003:11003"
+    networks:
+      - chaos-net
+    depends_on:
+      - anode-1
+      - toxiproxy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11003/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  # Anode node 4
+  anode-4:
+    image: anode:latest
+    environment:
+      - NODE_ID=4
+      - S3_PORT=9004
+      - GRPC_PORT=10004
+      - ADMIN_PORT=11004
+      - BOOTSTRAP=false
+      - PEERS=anode-1:10001
+      - DATA_DIR=/data
+    volumes:
+      - anode-4-data:/data
+    ports:
+      - "9004:9004"
+      - "10004:10004"
+      - "11004:11004"
+    networks:
+      - chaos-net
+    depends_on:
+      - anode-1
+      - toxiproxy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11004/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  # Anode node 5
+  anode-5:
+    image: anode:latest
+    environment:
+      - NODE_ID=5
+      - S3_PORT=9005
+      - GRPC_PORT=10005
+      - ADMIN_PORT=11005
+      - BOOTSTRAP=false
+      - PEERS=anode-1:10001
+      - DATA_DIR=/data
+    volumes:
+      - anode-5-data:/data
+    ports:
+      - "9005:9005"
+      - "10005:10005"
+      - "11005:11005"
+    networks:
+      - chaos-net
+    depends_on:
+      - anode-1
+      - toxiproxy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11005/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  # Chaos test runner
+  chaos-runner:
+    image: anode-chaos:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.chaos
+    environment:
+      - RUST_LOG=info
+      - TOXIPROXY_HOST=toxiproxy
+      - TOXIPROXY_PORT=8474
+      - CLUSTER_SIZE=5
+    networks:
+      - chaos-net
+    depends_on:
+      - toxiproxy
+      - anode-1
+      - anode-2
+      - anode-3
+      - anode-4
+      - anode-5
+    command: ["cargo", "test", "--", "--nocapture"]
+
+networks:
+  chaos-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  anode-1-data:
+    driver: local
+  anode-2-data:
+    driver: local
+  anode-3-data:
+    driver: local
+  anode-4-data:
+    driver: local
+  anode-5-data:
+    driver: local
+
+# Usage:
+# 1. Start the cluster:
+#    docker-compose -f docker-compose.chaos.yml up -d
+#
+# 2. Run chaos tests:
+#    docker-compose -f docker-compose.chaos.yml run chaos-runner
+#
+# 3. View logs:
+#    docker-compose -f docker-compose.chaos.yml logs -f
+#
+# 4. Stop and cleanup:
+#    docker-compose -f docker-compose.chaos.yml down -v
+#
+# Toxiproxy can be used for network chaos:
+# - Latency: toxiproxy-cli toxic add -t latency -a latency=1000 <proxy>
+# - Packet loss: toxiproxy-cli toxic add -t loss -a loss=0.1 <proxy>
+# - Bandwidth limit: toxiproxy-cli toxic add -t bandwidth -a rate=100 <proxy>

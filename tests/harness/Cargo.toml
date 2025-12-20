@@ -1,0 +1,53 @@
+[package]
+name = "anode-test-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.41", features = ["full", "test-util"] }
+async-trait = "0.1"
+
+# File system and process management
+tempfile = "3.14"
+nix = { version = "0.29", features = ["process", "signal", "user"] }
+sysinfo = "0.32"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Random generation
+rand = "0.8"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Testing utilities
+futures = "0.3"
+bytes = "1.9"
+
+# HTTP client for S3 API testing
+reqwest = { version = "0.12", features = ["json", "stream"] }
+hyper = "1.5"
+
+# Time utilities
+chrono = "0.4"
+
+# Histogram for metrics
+hdrhistogram = "7.5"
+
+# Project dependencies (to be created)
+# anode-client = { path = "../../crates/anode-client" }
+# anode-protocol = { path = "../../crates/anode-protocol" }
+
+[dev-dependencies]
+criterion = "0.5"
+proptest = "1.6"
+

@@ -1,0 +1,100 @@
+# Development values for anode
+# This configuration is optimized for local development and testing
+
+replicaCount: 3
+
+image:
+  repository: anode/anode
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+serviceAccount:
+  create: true
+
+podAnnotations: {}
+
+service:
+  type: ClusterIP
+  s3Port: 8080
+  adminPort: 8081
+  grpcPort: 9090
+
+ingress:
+  enabled: false
+
+# Disable persistence for faster iteration
+persistence:
+  enabled: false
+
+# Lower resource requirements for development
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+config:
+  cluster:
+    placementGroups: 8
+    replicationFactor: 2
+    electionTimeoutMs: 1000
+    heartbeatIntervalMs: 250
+
+  storage:
+    chunkSize: "1MB"
+    dataDir: /data
+    directIO: false
+    syncPolicy: never
+
+  s3:
+    enabled: true
+    virtualHostStyle: false
+    maxObjectSize: "1GB"
+
+  parquet:
+    cacheEnabled: true
+    cacheSizeMb: 64
+    autoDetect: true
+
+  logging:
+    level: debug
+    format: text
+    stdout: true
+
+  metrics:
+    enabled: true
+    format: prometheus
+    path: /metrics
+
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+
+podDisruptionBudget:
+  enabled: false
+
+# Allow faster updates in development
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    partition: 0
+
+# Use default affinity (no strict anti-affinity)
+affinity: {}
+
+# No network policies in development
+networkPolicy:
+  enabled: false
+
+# Shorter termination grace period
+terminationGracePeriodSeconds: 15
+
+# Extra environment for debugging
+extraEnv:
+  - name: RUST_BACKTRACE
+    value: "1"
+  - name: RUST_LOG
+    value: "debug"

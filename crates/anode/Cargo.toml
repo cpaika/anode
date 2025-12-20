@@ -1,0 +1,38 @@
+[package]
+name = "anode"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "anode"
+path = "src/main.rs"
+
+[dependencies]
+anode-protocol = { path = "../anode-protocol" }
+anode-storage = { path = "../anode-storage" }
+anode-raft = { path = "../anode-raft" }
+anode-s3 = { path = "../anode-s3" }
+anode-parquet = { path = "../anode-parquet" }
+anode-client = { path = "../anode-client" }
+
+tokio = { version = "1.42", features = ["full"] }
+axum = "0.8"
+clap = { version = "4.5", features = ["derive"] }
+config = "0.14"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+anyhow = "1.0"
+thiserror = "2.0"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+prometheus = "0.13"
+openraft = "0.9"
+tonic = "0.12"
+prost = "0.13"
+bytes = "1.5"
+futures = "0.3"
+async-trait = "0.1"
+num_cpus = "1.16"

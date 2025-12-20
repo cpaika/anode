@@ -1,0 +1,228 @@
+# Production values for anode
+# This is a reference configuration for production deployments
+
+replicaCount: 5
+
+image:
+  repository: anode/anode
+  pullPolicy: IfNotPresent
+  tag: "0.1.0"
+
+serviceAccount:
+  create: true
+  annotations: {}
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8081"
+  prometheus.io/path: "/metrics"
+
+podSecurityContext:
+  fsGroup: 1000
+  runAsUser: 1000
+  runAsNonRoot: true
+
+securityContext:
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+
+service:
+  type: ClusterIP
+  s3Port: 8080
+  adminPort: 8081
+  grpcPort: 9090
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: s3.production.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: anode-tls
+      hosts:
+        - s3.production.example.com
+
+persistence:
+  enabled: true
+  storageClass: "fast-ssd"
+  accessModes:
+    - ReadWriteOnce
+  size: 100Gi
+
+resources:
+  limits:
+    cpu: 4000m
+    memory: 8Gi
+  requests:
+    cpu: 1000m
+    memory: 2Gi
+
+config:
+  cluster:
+    placementGroups: 32
+    replicationFactor: 3
+    electionTimeoutMs: 1000
+    heartbeatIntervalMs: 250
+
+  storage:
+    chunkSize: "4MB"
+    dataDir: /data
+    directIO: true
+    syncPolicy: periodic
+    syncIntervalSecs: 5
+
+  s3:
+    enabled: true
+    virtualHostStyle: true
+    maxObjectSize: "5TB"
+    multipart:
+      minPartSize: "5MB"
+      maxPartSize: "5GB"
+      maxParts: 10000
+
+  parquet:
+    cacheEnabled: true
+    cacheSizeMb: 1024
+    autoDetect: true
+    extensions:
+      - .parquet
+      - .pq
+
+  logging:
+    level: info
+    format: json
+    stdout: true
+    file:
+      enabled: true
+      path: /var/log/anode/anode.log
+      maxSizeMb: 100
+      maxBackups: 10
+
+  metrics:
+    enabled: true
+    format: prometheus
+    path: /metrics
+
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+    labels:
+      prometheus: kube-prometheus
+
+  prometheusRule:
+    enabled: true
+    labels:
+      prometheus: kube-prometheus
+    rules:
+      - alert: AnodeHighErrorRate
+        expr: |
+          rate(anode_errors_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate on Anode"
+          description: "Anode is experiencing more than 10 errors per second."
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 3
+
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    partition: 0
+
+podManagementPolicy: OrderedReady
+
+revisionHistoryLimit: 10
+
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+    - labelSelector:
+        matchExpressions:
+        - key: app.kubernetes.io/name
+          operator: In
+          values:
+          - anode
+      topologyKey: kubernetes.io/hostname
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - anode
+        topologyKey: topology.kubernetes.io/zone
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: anode
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: anode
+
+priorityClassName: "high-priority"
+
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: anode
+      ports:
+      - protocol: TCP
+        port: 9090
+    - from: []
+      ports:
+      - protocol: TCP
+        port: 8080
+      - protocol: TCP
+        port: 8081
+  egress:
+    - to:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: anode
+    - to:
+      - namespaceSelector: {}
+      ports:
+      - protocol: TCP
+        port: 53
+      - protocol: UDP
+        port: 53
+
+lifecycle:
+  preStop:
+    exec:
+      command:
+        - /bin/sh
+        - -c
+        - sleep 30
+
+terminationGracePeriodSeconds: 60

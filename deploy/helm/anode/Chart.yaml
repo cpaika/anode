@@ -1,0 +1,21 @@
+apiVersion: v2
+name: anode
+description: Distributed object storage for small clusters
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - object-storage
+  - s3
+  - distributed
+  - rust
+  - raft
+  - parquet
+maintainers:
+  - name: Anode Team
+    email: maintainers@anode.io
+home: https://github.com/anode/anode
+sources:
+  - https://github.com/anode/anode
+icon: https://anode.io/icon.png
+kubeVersion: ">=1.19.0-0"

@@ -1,0 +1,164 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**/*.rs'
+      - '**.md'
+      - 'docs/**'
+  pull_request:
+    paths:
+      - 'crates/**/*.rs'
+      - '**.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rustdoc:
+    name: Build Rust Documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry/index
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-target-docs-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-target-docs-
+
+      - name: Build documentation
+        run: |
+          cargo doc --workspace --no-deps --all-features --document-private-items
+        env:
+          RUSTDOCFLAGS: -D warnings --cfg docsrs
+
+      - name: Create index.html redirect
+        run: |
+          cat > target/doc/index.html << EOF
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta http-equiv="refresh" content="0; url=anode/index.html">
+          </head>
+          <body>
+            <p>Redirecting to <a href="anode/index.html">anode documentation</a></p>
+          </body>
+          </html>
+          EOF
+
+      - name: Upload documentation
+        uses: actions/upload-artifact@v4
+        with:
+          name: rustdoc
+          path: target/doc/
+
+  deploy-docs:
+    name: Deploy Documentation to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: rustdoc
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download documentation
+        uses: actions/download-artifact@v4
+        with:
+          name: rustdoc
+          path: docs-output
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs-output
+          publish_branch: gh-pages
+          force_orphan: true
+
+  markdown-lint:
+    name: Lint Markdown
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint markdown files
+        uses: DavidAnson/markdownlint-cli2-action@v15
+        with:
+          globs: |
+            **/*.md
+            !target/**
+            !.cargo/**
+
+  check-links:
+    name: Check Documentation Links
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check links in markdown files
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: 'yes'
+          use-verbose-mode: 'yes'
+          config-file: '.github/markdown-link-check.json'
+          folder-path: 'docs/'
+          file-path: './README.md, ./CONTRIBUTING.md'
+
+  spell-check:
+    name: Spell Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run spell check
+        uses: streetsidesoftware/cspell-action@v5
+        with:
+          files: |
+            **/*.md
+            **/*.rs
+          config: '.github/cspell.json'
+          incremental_files_only: false
+
+  docs-summary:
+    name: Documentation Summary
+    runs-on: ubuntu-latest
+    needs: [rustdoc, markdown-lint, check-links]
+    if: always()
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## Documentation Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Results" >> $GITHUB_STEP_SUMMARY
+          echo "- Rustdoc: ${{ needs.rustdoc.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Markdown Lint: ${{ needs.markdown-lint.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Link Check: ${{ needs.check-links.result }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check for failures
+        if: ${{ contains(needs.*.result, 'failure') }}
+        run: |
+          echo "::error::Documentation checks failed"
+          exit 1

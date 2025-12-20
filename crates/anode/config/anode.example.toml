@@ -1,0 +1,139 @@
+# Anode Configuration Example
+# Copy this file to /etc/anode/config.toml or specify with --config
+
+[node]
+# Unique node identifier (must be > 0)
+id = 1
+
+# Human-readable node name
+name = "anode-1"
+
+# S3 API bind address
+s3_addr = "0.0.0.0:9000"
+
+# gRPC API bind address (internal cluster communication)
+grpc_addr = "0.0.0.0:9001"
+
+# Admin/metrics API bind address
+admin_addr = "0.0.0.0:9002"
+
+[cluster]
+# Cluster name
+name = "anode-cluster"
+
+# Initial cluster members (gRPC addresses) for bootstrap
+# Leave empty for single-node cluster
+initial_members = [
+    # "192.168.1.10:9001",
+    # "192.168.1.11:9001",
+    # "192.168.1.12:9001",
+]
+
+# Number of replicas for each object (default: 3)
+# For a 3-node cluster, use 3 for full replication
+replication_factor = 3
+
+# Number of placement groups for distributing data (default: 128)
+# More placement groups = better distribution, but more metadata overhead
+placement_groups = 128
+
+# Heartbeat interval in milliseconds (default: 1000)
+heartbeat_interval_ms = 1000
+
+# Election timeout in milliseconds (default: 3000)
+# Should be significantly larger than heartbeat_interval_ms
+election_timeout_ms = 3000
+
+[storage]
+# Root directory for data storage
+data_dir = "/var/lib/anode/data"
+
+# Directory for metadata storage (optional, defaults to data_dir/metadata)
+# metadata_dir = "/var/lib/anode/metadata"
+
+# Chunk size for object splitting
+# Supported units: KB, MB, GB (or K, M, G)
+chunk_size = "4MB"
+
+# Whether to sync writes to disk (fsync)
+# true = safer but slower, false = faster but less durable
+sync_writes = false
+
+# Maximum cache size for metadata in bytes (default: 100MB)
+metadata_cache_size = 104857600
+
+# Number of worker threads for I/O operations
+# Defaults to number of CPU cores
+io_threads = 8
+
+[s3]
+# Maximum request body size in bytes (default: 5GB)
+max_body_size = 5368709120
+
+# Request timeout in seconds (default: 300)
+request_timeout_secs = 300
+
+# Enable multipart upload support (default: true)
+enable_multipart = true
+
+# Minimum part size for multipart uploads (minimum 5MB per S3 spec)
+min_part_size = 5242880
+
+# Enable virtual-hosted-style requests (bucket.domain.com)
+# false = path-style (domain.com/bucket)
+virtual_host_style = false
+
+[raft]
+# Snapshot interval in log entries (default: 10000)
+snapshot_interval = 10000
+
+# Maximum number of log entries to keep in memory (default: 100000)
+max_log_entries = 100000
+
+# Compaction threshold - trigger compaction after this many log entries (default: 50000)
+compaction_threshold = 50000
+
+# Enable log compaction (default: true)
+enable_compaction = true
+
+[parquet]
+# Enable Parquet metadata caching (default: true)
+enable_cache = true
+
+# Parquet cache size in bytes (default: 256MB)
+cache_size = 268435456
+
+# Number of rows per row group (default: 100000)
+row_group_size = 100000
+
+# Enable predicate pushdown optimization (default: true)
+enable_predicate_pushdown = true
+
+# Enable column pruning optimization (default: true)
+enable_column_pruning = true
+
+[metrics]
+# Enable Prometheus metrics (default: true)
+enabled = true
+
+# Metrics collection interval in seconds (default: 15)
+interval_secs = 15
+
+# Retention period for metrics in seconds (0 = infinite)
+retention_secs = 0
+
+[logging]
+# Log level: trace, debug, info, warn, error (default: info)
+level = "info"
+
+# Enable JSON formatted logs (default: false)
+json_format = false
+
+# Log file path (None = stdout only)
+# file = "/var/log/anode/anode.log"
+
+# Enable log rotation (default: false)
+rotate = false
+
+# Maximum log file size before rotation in bytes (default: 100MB)
+max_size = 104857600

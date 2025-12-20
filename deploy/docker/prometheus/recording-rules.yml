@@ -1,0 +1,274 @@
+# Prometheus recording rules for Anode
+# These pre-compute frequently used queries to improve dashboard performance
+groups:
+  # Request rate and latency aggregations
+  - name: anode_request_aggregations
+    interval: 30s
+    rules:
+      # Request rate by endpoint
+      - record: anode:requests:rate5m
+        expr: rate(anode_requests_total[5m])
+
+      - record: anode:requests:rate1m
+        expr: rate(anode_requests_total[1m])
+
+      # Request rate by status code class
+      - record: anode:requests:rate5m:by_status_class
+        expr: |
+          sum by (instance, status_class) (
+            label_replace(
+              rate(anode_requests_total[5m]),
+              "status_class",
+              "${1}xx",
+              "status",
+              "(.).*"
+            )
+          )
+
+      # Error rate (4xx and 5xx)
+      - record: anode:requests:error_rate5m
+        expr: |
+          sum by (instance) (
+            rate(anode_requests_total{status=~"[45].."}[5m])
+          )
+
+      # Request latency percentiles
+      - record: anode:request_duration:p50
+        expr: histogram_quantile(0.50, rate(anode_request_duration_seconds_bucket[5m]))
+
+      - record: anode:request_duration:p95
+        expr: histogram_quantile(0.95, rate(anode_request_duration_seconds_bucket[5m]))
+
+      - record: anode:request_duration:p99
+        expr: histogram_quantile(0.99, rate(anode_request_duration_seconds_bucket[5m]))
+
+      # Average request duration
+      - record: anode:request_duration:avg
+        expr: |
+          rate(anode_request_duration_seconds_sum[5m])
+          /
+          rate(anode_request_duration_seconds_count[5m])
+
+  # Storage operation aggregations
+  - name: anode_storage_aggregations
+    interval: 30s
+    rules:
+      # Storage operation rates
+      - record: anode:operations:rate5m
+        expr: rate(anode_operations_total[5m])
+
+      # Storage operation error rate
+      - record: anode:operations:error_rate5m
+        expr: rate(anode_operation_errors_total[5m])
+
+      # Storage operation latency percentiles
+      - record: anode:operation_duration:p95
+        expr: histogram_quantile(0.95, rate(anode_operation_duration_seconds_bucket[5m]))
+
+      - record: anode:operation_duration:p99
+        expr: histogram_quantile(0.99, rate(anode_operation_duration_seconds_bucket[5m]))
+
+      # Total storage per cluster
+      - record: anode:storage:total_bytes
+        expr: sum(anode_storage_bytes_total)
+
+      - record: anode:storage:total_objects
+        expr: sum(anode_objects_total)
+
+      # Storage per bucket
+      - record: anode:storage:bytes_by_bucket
+        expr: sum by (bucket) (anode_storage_bytes_total)
+
+      - record: anode:storage:objects_by_bucket
+        expr: sum by (bucket) (anode_objects_total)
+
+  # Raft consensus aggregations
+  - name: anode_raft_aggregations
+    interval: 30s
+    rules:
+      # Leader count (should be 1)
+      - record: anode:raft:leader_count
+        expr: sum(anode_raft_is_leader)
+
+      # Proposal rate
+      - record: anode:raft:proposal_rate5m
+        expr: rate(anode_raft_proposals_total[5m])
+
+      # Proposal failure rate
+      - record: anode:raft:proposal_failure_rate5m
+        expr: rate(anode_raft_proposal_failures_total[5m])
+
+      # Proposal failure ratio
+      - record: anode:raft:proposal_failure_ratio
+        expr: |
+          rate(anode_raft_proposal_failures_total[5m])
+          /
+          (rate(anode_raft_proposals_total[5m]) + rate(anode_raft_proposal_failures_total[5m]))
+
+      # Commit lag (leader's commit index - follower's commit index)
+      - record: anode:raft:commit_lag
+        expr: |
+          max(anode_raft_commit_index) - ignoring(instance) group_right()
+          anode_raft_commit_index
+
+      # Applied lag
+      - record: anode:raft:applied_lag
+        expr: anode_raft_commit_index - anode_raft_last_applied
+
+  # Cluster health aggregations
+  - name: anode_cluster_aggregations
+    interval: 30s
+    rules:
+      # Number of nodes up
+      - record: anode:cluster:nodes_up
+        expr: count(up{job="anode"} == 1)
+
+      # Number of nodes down
+      - record: anode:cluster:nodes_down
+        expr: count(up{job="anode"} == 0) or vector(0)
+
+      # Cluster health percentage
+      - record: anode:cluster:health_percentage
+        expr: |
+          (anode_cluster_healthy_nodes / anode_cluster_nodes_total) * 100
+
+      # Maximum replication lag across all peers
+      - record: anode:cluster:max_replication_lag
+        expr: max(anode_cluster_replication_lag_seconds)
+
+      # Average replication lag
+      - record: anode:cluster:avg_replication_lag
+        expr: avg(anode_cluster_replication_lag_seconds)
+
+      # Maximum peer RTT
+      - record: anode:cluster:max_peer_rtt
+        expr: max(anode_cluster_peer_rtt_seconds)
+
+  # Parquet cache aggregations
+  - name: anode_parquet_aggregations
+    interval: 30s
+    rules:
+      # Cache hit rate
+      - record: anode:parquet_cache:hit_rate5m
+        expr: |
+          rate(anode_parquet_cache_hits_total[5m])
+          /
+          (rate(anode_parquet_cache_hits_total[5m]) + rate(anode_parquet_cache_misses_total[5m]))
+
+      # Cache hit ratio (instant)
+      - record: anode:parquet_cache:hit_ratio
+        expr: |
+          anode_parquet_cache_hits_total
+          /
+          (anode_parquet_cache_hits_total + anode_parquet_cache_misses_total)
+
+      # Total cache accesses rate
+      - record: anode:parquet_cache:access_rate5m
+        expr: |
+          rate(anode_parquet_cache_hits_total[5m]) + rate(anode_parquet_cache_misses_total[5m])
+
+      # Cache eviction rate
+      - record: anode:parquet_cache:eviction_rate5m
+        expr: rate(anode_parquet_cache_evictions_total[5m])
+
+      # Cache utilization percentage
+      - record: anode:parquet_cache:utilization_percent
+        expr: |
+          (anode_parquet_cache_size_bytes / 1073741824) * 100
+
+      # Query latency percentiles
+      - record: anode:parquet_query:p95
+        expr: histogram_quantile(0.95, rate(anode_parquet_query_duration_seconds_bucket[5m]))
+
+      - record: anode:parquet_query:p99
+        expr: histogram_quantile(0.99, rate(anode_parquet_query_duration_seconds_bucket[5m]))
+
+      # Query rate by type
+      - record: anode:parquet_queries:rate5m
+        expr: rate(anode_parquet_queries_total[5m])
+
+  # Network aggregations
+  - name: anode_network_aggregations
+    interval: 30s
+    rules:
+      # Network throughput
+      - record: anode:network:send_rate5m
+        expr: rate(anode_network_bytes_sent_total[5m])
+
+      - record: anode:network:receive_rate5m
+        expr: rate(anode_network_bytes_received_total[5m])
+
+      # Total network throughput
+      - record: anode:network:total_throughput5m
+        expr: |
+          rate(anode_network_bytes_sent_total[5m]) + rate(anode_network_bytes_received_total[5m])
+
+      # Connection count
+      - record: anode:network:total_connections
+        expr: sum(anode_active_connections)
+
+  # System resource aggregations
+  - name: anode_system_aggregations
+    interval: 30s
+    rules:
+      # Disk usage percentage
+      - record: anode:disk:usage_percent
+        expr: |
+          (anode_disk_usage_bytes / (anode_disk_usage_bytes + anode_disk_available_bytes)) * 100
+
+      # Average memory usage across cluster
+      - record: anode:memory:avg_usage_gb
+        expr: avg(anode_memory_usage_bytes) / 1024 / 1024 / 1024
+
+      # Average CPU usage across cluster
+      - record: anode:cpu:avg_usage_percent
+        expr: avg(anode_cpu_usage_percent)
+
+      # Total file descriptors used
+      - record: anode:fd:total_open
+        expr: sum(anode_open_file_descriptors)
+
+  # Multipart upload aggregations
+  - name: anode_multipart_aggregations
+    interval: 30s
+    rules:
+      # Multipart upload rate
+      - record: anode:multipart:completion_rate5m
+        expr: rate(anode_multipart_parts_total{status="completed"}[5m])
+
+      # Multipart upload failure rate
+      - record: anode:multipart:failure_rate5m
+        expr: rate(anode_multipart_parts_total{status="failed"}[5m])
+
+      # Average multipart upload duration
+      - record: anode:multipart:avg_duration
+        expr: |
+          rate(anode_multipart_upload_duration_seconds_sum[5m])
+          /
+          rate(anode_multipart_upload_duration_seconds_count[5m])
+
+      # Multipart upload p95 latency
+      - record: anode:multipart:p95_duration
+        expr: histogram_quantile(0.95, rate(anode_multipart_upload_duration_seconds_bucket[5m]))
+
+  # Availability SLIs (Service Level Indicators)
+  - name: anode_sli
+    interval: 30s
+    rules:
+      # Request success rate (SLI)
+      - record: anode:sli:request_success_rate
+        expr: |
+          sum(rate(anode_requests_total{status!~"5.."}[5m]))
+          /
+          sum(rate(anode_requests_total[5m]))
+
+      # Request latency SLI (% of requests under 1s)
+      - record: anode:sli:request_latency_good
+        expr: |
+          sum(rate(anode_request_duration_seconds_bucket{le="1.0"}[5m]))
+          /
+          sum(rate(anode_request_duration_seconds_count[5m]))
+
+      # Availability SLI
+      - record: anode:sli:availability
+        expr: avg(up{job="anode"})

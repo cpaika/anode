@@ -1,0 +1,93 @@
+version: 2
+updates:
+  # Cargo dependencies
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "christopherpaika"
+    labels:
+      - "dependencies"
+      - "rust"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    ignore:
+      # Ignore major version updates for critical dependencies
+      # until ready to upgrade
+      - dependency-name: "openraft"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "redb"
+        update-types: ["version-update:semver-major"]
+    groups:
+      aws:
+        patterns:
+          - "aws-*"
+        update-types:
+          - "minor"
+          - "patch"
+      tokio:
+        patterns:
+          - "tokio*"
+        update-types:
+          - "minor"
+          - "patch"
+      tonic:
+        patterns:
+          - "tonic*"
+          - "prost*"
+        update-types:
+          - "minor"
+          - "patch"
+      serde:
+        patterns:
+          - "serde*"
+        update-types:
+          - "minor"
+          - "patch"
+      testing:
+        patterns:
+          - "criterion"
+          - "proptest"
+          - "quickcheck"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "christopherpaika"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
+
+  # Docker dependencies
+  - package-ecosystem: "docker"
+    directory: "/deploy/docker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "christopherpaika"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(docker)"
+      include: "scope"

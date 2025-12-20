@@ -1,0 +1,147 @@
+# Benchmark Configuration for Anode
+#
+# This file configures default parameters for all benchmarks.
+# Individual benchmarks can override these settings.
+
+[general]
+# Default sample size for all benchmarks
+sample_size = 100
+
+# Default measurement time in seconds
+measurement_time = 10
+
+# Default warm-up time in seconds
+warm_up_time = 3
+
+# Significance level for regression detection (%)
+regression_threshold = 5.0
+
+[storage]
+# Storage benchmark specific settings
+sample_size = 100
+measurement_time = 10
+
+# Object sizes to test (in bytes)
+object_sizes = [4096, 65536, 1048576, 104857600]
+
+# Number of objects for list tests
+list_object_counts = [10, 100, 1000, 10000]
+
+[throughput]
+# Throughput benchmark specific settings
+sample_size = 50
+measurement_time = 15
+
+# Concurrent client counts to test
+client_counts = [1, 4, 16, 64]
+
+# Workload patterns
+[throughput.workloads]
+read_heavy = 0.8    # 80% reads
+balanced = 0.5      # 50% reads
+write_heavy = 0.2   # 20% reads
+
+[latency]
+# Latency benchmark specific settings
+sample_size = 200
+measurement_time = 10
+
+# Percentiles to report
+percentiles = [50, 90, 95, 99, 99.9]
+
+# Enable detailed latency histograms
+enable_histograms = true
+
+[memory]
+# Memory benchmark specific settings
+sample_size = 50
+measurement_time = 10
+
+# Object counts for memory tests
+object_counts = [100, 1000, 10000, 100000]
+
+# Cache sizes to test
+cache_sizes = [100, 1000, 10000]
+
+# Enable memory profiling
+enable_profiling = false
+
+[parquet]
+# Parquet benchmark specific settings
+sample_size = 100
+measurement_time = 10
+
+# Row counts for test Parquet files
+row_counts = [1000, 10000, 100000, 1000000]
+
+# Number of columns to test
+column_counts = [10, 100, 1000]
+
+# Cache sizes for metadata cache tests
+cache_sizes = [100, 1000, 10000]
+
+[output]
+# Output format settings
+
+# Enable HTML reports
+enable_html = true
+
+# Enable JSON output
+enable_json = true
+
+# Enable CSV output for custom analysis
+enable_csv = false
+
+# Directory for saving results
+results_dir = "results"
+
+# Enable baseline comparison
+enable_baseline_comparison = true
+
+[ci]
+# CI-specific settings
+
+# Reduce sample size for faster CI runs
+sample_size = 20
+
+# Reduce measurement time for faster CI runs
+measurement_time = 5
+
+# Fail build on regression
+fail_on_regression = false
+
+# Regression threshold for CI (%)
+regression_threshold = 10.0
+
+[profiling]
+# Profiling settings
+
+# Enable CPU profiling
+enable_cpu_profiling = false
+
+# Enable memory profiling
+enable_memory_profiling = false
+
+# Enable allocation tracking
+enable_allocation_tracking = false
+
+# Profiling output directory
+profiling_dir = "profiling"
+
+[reporting]
+# Reporting settings
+
+# Generate comparison reports
+enable_comparison = true
+
+# Generate summary statistics
+enable_summary = true
+
+# Include system information in reports
+include_system_info = true
+
+# Generate plots
+enable_plots = true
+
+# Plot format (svg, png)
+plot_format = "svg"

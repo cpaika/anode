@@ -1,0 +1,64 @@
+syntax = "proto3";
+package anode.replication;
+
+import "common.proto";
+
+service ReplicationService {
+  // Stream chunks from one node to another
+  rpc ReplicateChunks(stream ReplicateChunkRequest) returns (stream ReplicateChunkResponse);
+
+  // Verify chunk exists and is valid
+  rpc VerifyChunk(VerifyChunkRequest) returns (VerifyChunkResponse);
+
+  // Fetch missing chunks
+  rpc FetchChunk(FetchChunkRequest) returns (stream FetchChunkResponse);
+
+  // Get list of chunks on a node
+  rpc ListChunks(ListChunksRequest) returns (stream ListChunksResponse);
+}
+
+message ReplicateChunkRequest {
+  anode.common.ChunkId chunk_id = 1;
+  bytes data = 2;
+  bool is_last = 3;
+}
+
+message ReplicateChunkResponse {
+  bool success = 1;
+  string error = 2;
+  anode.common.ChunkId chunk_id = 3;
+}
+
+message VerifyChunkRequest {
+  anode.common.ChunkId chunk_id = 1;
+}
+
+message VerifyChunkResponse {
+  bool exists = 1;
+  bool valid = 2;
+  uint64 size = 3;
+}
+
+message FetchChunkRequest {
+  anode.common.ChunkId chunk_id = 1;
+}
+
+message FetchChunkResponse {
+  bytes data = 1;
+  bool is_last = 2;
+}
+
+message ListChunksRequest {
+  optional bytes start_after = 1;
+  uint32 limit = 2;
+}
+
+message ListChunksResponse {
+  repeated ChunkInfo chunks = 1;
+}
+
+message ChunkInfo {
+  anode.common.ChunkId chunk_id = 1;
+  uint64 size = 2;
+  uint32 ref_count = 3;
+}

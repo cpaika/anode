@@ -1,0 +1,45 @@
+# Grafana datasource configuration for Prometheus
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      timeInterval: "15s"
+      queryTimeout: "60s"
+      httpMethod: POST
+      # Custom query parameters
+      customQueryParameters: ""
+      # Enable Prometheus exemplars
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: tempo
+      # Incremental querying
+      incrementalQuerying: true
+      incrementalQueryOverlapWindow: 10m
+      # Disable metrics lookup (faster dashboard loading)
+      disableMetricsLookup: false
+      # Prometheus type (default or cortex or mimir)
+      prometheusType: default
+      # Prometheus version
+      prometheusVersion: "2.45.0"
+      # Cache level (Low, Medium, High, None)
+      cacheLevel: "High"
+    version: 1
+
+  # Optional: Add a second Prometheus datasource for long-term storage
+  # - name: Prometheus-LongTerm
+  #   type: prometheus
+  #   access: proxy
+  #   url: http://cortex:9009/prometheus
+  #   isDefault: false
+  #   editable: true
+  #   jsonData:
+  #     timeInterval: "1m"
+  #     queryTimeout: "120s"
+  #     httpMethod: POST
+  #   version: 1

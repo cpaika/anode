@@ -1,0 +1,86 @@
+Thank you for installing {{ .Chart.Name }}!
+
+Your release is named {{ .Release.Name }}.
+
+To learn more about the release, try:
+
+  $ helm status {{ .Release.Name }} -n {{ .Release.Namespace }}
+  $ helm get all {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+{{- if .Values.ingress.enabled }}
+
+Anode S3 API is accessible via Ingress:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else }}
+
+1. Get the S3 API URL by running these commands:
+{{- if contains "NodePort" .Values.service.type }}
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "anode.fullname" . }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo "S3 API: http://$NODE_IP:$NODE_PORT"
+{{- else if contains "LoadBalancer" .Values.service.type }}
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+  You can watch the status by running:
+    kubectl get --namespace {{ .Release.Namespace }} svc -w {{ include "anode.fullname" . }}
+
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "anode.fullname" . }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+  echo "S3 API: http://$SERVICE_IP:{{ .Values.service.s3Port }}"
+{{- else if contains "ClusterIP" .Values.service.type }}
+  kubectl port-forward --namespace {{ .Release.Namespace }} svc/{{ include "anode.fullname" . }} {{ .Values.service.s3Port }}:{{ .Values.service.s3Port }} &
+  echo "S3 API: http://127.0.0.1:{{ .Values.service.s3Port }}"
+{{- end }}
+{{- end }}
+
+2. Get the admin credentials:
+  export ACCESS_KEY=$(kubectl get secret --namespace {{ .Release.Namespace }} {{ include "anode.secretName" . }} -o jsonpath="{.data.s3-access-key}" | base64 -d)
+  export SECRET_KEY=$(kubectl get secret --namespace {{ .Release.Namespace }} {{ include "anode.secretName" . }} -o jsonpath="{.data.s3-secret-key}" | base64 -d)
+
+  echo "Access Key: $ACCESS_KEY"
+  echo "Secret Key: $SECRET_KEY"
+
+3. Configure AWS CLI or S3 client:
+  aws configure set aws_access_key_id $ACCESS_KEY
+  aws configure set aws_secret_access_key $SECRET_KEY
+  aws configure set default.region us-east-1
+
+4. Test the S3 API:
+  # Create a bucket
+  aws --endpoint-url http://localhost:{{ .Values.service.s3Port }} s3 mb s3://test-bucket
+
+  # Upload a file
+  echo "Hello, Anode!" > test.txt
+  aws --endpoint-url http://localhost:{{ .Values.service.s3Port }} s3 cp test.txt s3://test-bucket/
+
+  # List objects
+  aws --endpoint-url http://localhost:{{ .Values.service.s3Port }} s3 ls s3://test-bucket/
+
+5. Check cluster status:
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "anode.name" . }}
+
+  # Check logs
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "anode.name" . }} --tail=100
+
+{{- if .Values.monitoring.enabled }}
+
+6. Access metrics (if monitoring is enabled):
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+  Prometheus ServiceMonitor is configured. Metrics will be automatically scraped.
+{{- else }}
+  kubectl port-forward --namespace {{ .Release.Namespace }} svc/{{ include "anode.fullname" . }} {{ .Values.service.adminPort }}:{{ .Values.service.adminPort }} &
+  curl http://127.0.0.1:{{ .Values.service.adminPort }}{{ .Values.config.metrics.path }}
+{{- end }}
+{{- end }}
+
+For more information, visit:
+  Documentation: {{ .Chart.Home }}
+  Source Code: {{ index .Chart.Sources 0 }}
+
+IMPORTANT NOTES:
+  - The cluster requires at least {{ div (add .Values.replicaCount 1) 2 }} nodes to maintain quorum
+  - Current replication factor: {{ .Values.config.cluster.replicationFactor }}
+  - Data is stored in persistent volumes ({{ .Values.persistence.size }} each)
+  {{- if not .Values.persistence.enabled }}
+  - WARNING: Persistence is disabled! Data will be lost on pod restart.
+  {{- end }}

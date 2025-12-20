@@ -1,0 +1,68 @@
+syntax = "proto3";
+package anode.common;
+
+// Node identifier
+message NodeId {
+  uint64 id = 1;
+}
+
+// Cluster identifier
+message ClusterId {
+  string id = 1;
+}
+
+// Content-addressed chunk identifier (SHA-256)
+message ChunkId {
+  bytes hash = 1; // 32 bytes
+}
+
+// Object key (bucket + key path)
+message ObjectKey {
+  string bucket = 1;
+  string key = 2;
+}
+
+// Object manifest - metadata about stored object
+message ObjectManifest {
+  ObjectKey key = 1;
+  uint64 total_size = 2;
+  bytes checksum = 3; // SHA-256 of entire object
+  repeated ChunkId chunks = 4;
+  int64 created_at = 5; // Unix timestamp millis
+  int64 modified_at = 6;
+  map<string, string> metadata = 7;
+  optional ParquetMetadata parquet_meta = 8;
+}
+
+// Parquet-specific metadata cache
+message ParquetMetadata {
+  bytes schema = 1; // Serialized Arrow schema
+  repeated RowGroupInfo row_groups = 2;
+}
+
+message RowGroupInfo {
+  uint64 num_rows = 1;
+  uint64 total_byte_size = 2;
+  repeated ColumnChunkInfo columns = 3;
+}
+
+message ColumnChunkInfo {
+  string column_path = 1;
+  uint64 offset = 2;
+  uint64 compressed_size = 3;
+  uint64 uncompressed_size = 4;
+}
+
+// Bucket configuration
+message BucketConfig {
+  string name = 1;
+  uint32 replication_factor = 2;
+  int64 created_at = 3;
+}
+
+// Placement group
+message PlacementGroup {
+  uint32 id = 1;
+  repeated NodeId members = 2;
+  NodeId leader = 3;
+}

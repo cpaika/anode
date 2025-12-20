@@ -1,0 +1,52 @@
+# Minimal values for anode
+# Smallest viable configuration for testing or very small deployments
+
+replicaCount: 1
+
+image:
+  repository: anode/anode
+  pullPolicy: IfNotPresent
+  tag: ""
+
+service:
+  type: ClusterIP
+  s3Port: 8080
+  adminPort: 8081
+  grpcPort: 9090
+
+persistence:
+  enabled: true
+  size: 5Gi
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+config:
+  cluster:
+    placementGroups: 4
+    replicationFactor: 1
+
+  storage:
+    chunkSize: "2MB"
+    dataDir: /data
+
+  parquet:
+    cacheEnabled: true
+    cacheSizeMb: 128
+
+  logging:
+    level: info
+    format: json
+
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+
+podDisruptionBudget:
+  enabled: false

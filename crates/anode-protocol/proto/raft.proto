@@ -1,0 +1,85 @@
+syntax = "proto3";
+package anode.raft;
+
+import "common.proto";
+
+// Raft RPC service
+service RaftService {
+  rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+  rpc Vote(VoteRequest) returns (VoteResponse);
+  rpc InstallSnapshot(stream InstallSnapshotRequest) returns (InstallSnapshotResponse);
+}
+
+message AppendEntriesRequest {
+  uint64 term = 1;
+  anode.common.NodeId leader_id = 2;
+  uint64 prev_log_index = 3;
+  uint64 prev_log_term = 4;
+  repeated LogEntry entries = 5;
+  uint64 leader_commit = 6;
+}
+
+message AppendEntriesResponse {
+  uint64 term = 1;
+  bool success = 2;
+  uint64 match_index = 3;
+}
+
+message VoteRequest {
+  uint64 term = 1;
+  anode.common.NodeId candidate_id = 2;
+  uint64 last_log_index = 3;
+  uint64 last_log_term = 4;
+}
+
+message VoteResponse {
+  uint64 term = 1;
+  bool vote_granted = 2;
+}
+
+message InstallSnapshotRequest {
+  uint64 term = 1;
+  anode.common.NodeId leader_id = 2;
+  uint64 last_included_index = 3;
+  uint64 last_included_term = 4;
+  uint64 offset = 5;
+  bytes data = 6;
+  bool done = 7;
+}
+
+message InstallSnapshotResponse {
+  uint64 term = 1;
+}
+
+message LogEntry {
+  uint64 term = 1;
+  uint64 index = 2;
+  oneof payload {
+    PutObjectCommand put_object = 3;
+    DeleteObjectCommand delete_object = 4;
+    CreateBucketCommand create_bucket = 5;
+    DeleteBucketCommand delete_bucket = 6;
+    MembershipChange membership = 7;
+  }
+}
+
+message PutObjectCommand {
+  anode.common.ObjectManifest manifest = 1;
+}
+
+message DeleteObjectCommand {
+  anode.common.ObjectKey key = 1;
+}
+
+message CreateBucketCommand {
+  anode.common.BucketConfig config = 1;
+}
+
+message DeleteBucketCommand {
+  string bucket_name = 1;
+}
+
+message MembershipChange {
+  repeated anode.common.NodeId add_nodes = 1;
+  repeated anode.common.NodeId remove_nodes = 2;
+}

@@ -1,0 +1,94 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Build artifacts
+/dist/
+/build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Testing
+coverage/
+*.profraw
+*.profdata
+
+# Benchmarks
+/benches/target/
+criterion/
+
+# Documentation
+/target/doc/
+
+# Temporary files
+*.tmp
+*.temp
+/tmp/
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+*.redb
+
+# Configuration
+config.local.toml
+secrets.toml
+
+# OS
+Thumbs.db
+.AppleDouble
+.LSOverride
+._*
+
+# Network
+.hosts
+
+# Backup files
+*.bak
+*.orig
+
+# Flamegraphs and profiling
+flamegraph.svg
+perf.data
+perf.data.old
+
+# Node (if using any JS tooling)
+node_modules/
+package-lock.json
+
+# Python (if using any Python tooling)
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+ENV/
+
+# Generated protobuf files
+*.pb.rs
+
+# Criterion benchmark results
+benches/target/
+
+# Local development
+.local/
+scratch/

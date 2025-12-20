@@ -1,0 +1,68 @@
+Anode Helm Chart - File Listing
+================================
+
+Root Files:
+-----------
+Chart.yaml                  - Chart metadata (name, version, description, maintainers)
+values.yaml                 - Default configuration values (356 lines)
+values.schema.json          - JSON schema for values validation
+.helmignore                 - Files to ignore when packaging
+
+Documentation:
+--------------
+README.md                   - Comprehensive documentation (427 lines)
+QUICKSTART.md              - Quick start guide
+CHANGELOG.md               - Version history
+CHART_SUMMARY.md           - Implementation summary (13KB)
+TESTING.md                 - Testing guide
+FILES.txt                  - This file
+
+Configuration Examples:
+-----------------------
+values-production.yaml     - Production configuration example
+values-development.yaml    - Development configuration example  
+values-minimal.yaml        - Minimal configuration example
+
+Helper Scripts:
+---------------
+install.sh                 - Installation helper script (executable)
+upgrade.sh                 - Upgrade helper script (executable)
+validate.sh                - Validation helper script (executable)
+
+Templates:
+----------
+templates/_helpers.tpl              - Template helper functions
+templates/statefulset.yaml          - Main StatefulSet definition (201 lines)
+templates/service.yaml              - Services (headless + load-balancing)
+templates/configmap.yaml            - Configuration (anode.toml)
+templates/secret.yaml               - Secrets (S3 credentials)
+templates/serviceaccount.yaml       - Service account
+templates/poddisruptionbudget.yaml  - PDB for high availability
+templates/ingress.yaml              - Ingress for external access
+templates/networkpolicy.yaml        - Network policies for security
+templates/servicemonitor.yaml       - Prometheus ServiceMonitor
+templates/prometheusrule.yaml       - Prometheus alerting rules
+templates/NOTES.txt                 - Post-install instructions
+templates/tests/test-connection.yaml - Helm test pod
+
+Total Files: 26
+Total Templates: 13
+Total Documentation: 6
+Total Scripts: 3
+Total Configuration Examples: 3
+
+Chart Features:
+---------------
+✓ Production-ready StatefulSet deployment
+✓ Persistent storage with PVC support
+✓ High availability (pod anti-affinity, PDB)
+✓ Comprehensive health checks (startup, liveness, readiness)
+✓ Security (non-root, read-only filesystem, dropped capabilities)
+✓ Monitoring (Prometheus ServiceMonitor, alerting rules)
+✓ Network policies
+✓ Ingress with TLS support
+✓ Automated tests
+✓ Helper scripts for installation, upgrade, validation
+✓ Multiple configuration examples
+✓ Extensive documentation
+✓ Values schema validation

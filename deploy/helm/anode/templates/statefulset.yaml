@@ -1,0 +1,201 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "anode.fullname" . }}
+  labels:
+    {{- include "anode.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "anode.headlessServiceName" . }}
+  replicas: {{ .Values.replicaCount }}
+  podManagementPolicy: {{ .Values.podManagementPolicy }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  updateStrategy:
+    {{- toYaml .Values.updateStrategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "anode.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "anode.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "anode.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      initContainers:
+      - name: init-data-dir
+        image: {{ include "anode.image" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Initializing data directory..."
+          mkdir -p {{ .Values.config.storage.dataDir }}/metadata
+          mkdir -p {{ .Values.config.storage.dataDir }}/blobs
+          mkdir -p {{ .Values.config.storage.dataDir }}/raft
+          chown -R 1000:1000 {{ .Values.config.storage.dataDir }}
+          echo "Data directory initialized successfully"
+        volumeMounts:
+        - name: data
+          mountPath: {{ .Values.config.storage.dataDir }}
+        securityContext:
+          runAsUser: 0
+          runAsNonRoot: false
+      {{- with .Values.initContainers }}
+        {{- toYaml . | nindent 6 }}
+      {{- end }}
+      containers:
+      - name: anode
+        image: {{ include "anode.image" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 10 }}
+        ports:
+        - name: s3
+          containerPort: {{ .Values.service.s3Port }}
+          protocol: TCP
+        - name: admin
+          containerPort: {{ .Values.service.adminPort }}
+          protocol: TCP
+        - name: grpc
+          containerPort: {{ .Values.service.grpcPort }}
+          protocol: TCP
+        env:
+        - name: ANODE_NODE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: ANODE_POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: ANODE_POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: ANODE_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: ANODE_CONFIG_PATH
+          value: /etc/anode/config.toml
+        - name: ANODE_DATA_DIR
+          value: {{ .Values.config.storage.dataDir }}
+        - name: ANODE_S3_PORT
+          value: {{ .Values.service.s3Port | quote }}
+        - name: ANODE_ADMIN_PORT
+          value: {{ .Values.service.adminPort | quote }}
+        - name: ANODE_GRPC_PORT
+          value: {{ .Values.service.grpcPort | quote }}
+        {{- with .Values.extraEnv }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.livenessProbe }}
+        livenessProbe:
+          {{- toYaml .Values.livenessProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.readinessProbe }}
+        readinessProbe:
+          {{- toYaml .Values.readinessProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.startupProbe }}
+        startupProbe:
+          {{- toYaml .Values.startupProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.lifecycle }}
+        lifecycle:
+          {{- toYaml .Values.lifecycle | nindent 10 }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        volumeMounts:
+        - name: data
+          mountPath: {{ .Values.config.storage.dataDir }}
+        - name: config
+          mountPath: /etc/anode
+          readOnly: true
+        - name: secret
+          mountPath: /etc/anode/secrets
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+        {{- with .Values.extraVolumeMounts }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.sidecarContainers }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "anode.configMapName" . }}
+      - name: secret
+        secret:
+          secretName: {{ include "anode.secretName" . }}
+          defaultMode: 0400
+      - name: tmp
+        emptyDir: {}
+      {{- with .Values.extraVolumes }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- if not .Values.persistence.enabled }}
+      - name: data
+        emptyDir: {}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.affinity }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- else }}
+      affinity:
+        {{- include "anode.podAntiAffinity" . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if .Values.persistence.enabled }}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+      {{- with .Values.persistence.annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      accessModes:
+        {{- toYaml .Values.persistence.accessModes | nindent 8 }}
+      {{- if .Values.persistence.storageClass }}
+      storageClassName: {{ .Values.persistence.storageClass }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.persistence.size }}
+      {{- with .Values.persistence.selector }}
+      selector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- end }}

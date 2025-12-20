@@ -1,0 +1,329 @@
+name: Kubernetes Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  K3D_VERSION: v5.6.0
+  HELM_VERSION: v3.13.0
+  KUBECTL_VERSION: v1.28.0
+
+jobs:
+  k3d-integration:
+    name: K3d Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install k3d
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=${{ env.K3D_VERSION }} bash
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-k3d-buildx-${{ hashFiles('deploy/docker/Dockerfile') }}
+          restore-keys: |
+            ${{ runner.os }}-k3d-buildx-
+
+      - name: Create k3d cluster
+        run: |
+          k3d cluster create anode-test \
+            --config deploy/k3d/cluster.yaml \
+            --wait \
+            --timeout 5m
+
+      - name: Verify cluster
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+          kubectl get pods -A
+
+      - name: Create local registry
+        run: |
+          k3d registry create anode-registry.localhost --port 5432
+          echo "127.0.0.1 anode-registry.localhost" | sudo tee -a /etc/hosts
+
+      - name: Build and load anode image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          push: true
+          tags: anode-registry.localhost:5432/anode:test
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Create namespace
+        run: |
+          kubectl create namespace anode-test
+
+      - name: Deploy anode via Helm
+        run: |
+          helm install anode deploy/helm/anode \
+            --namespace anode-test \
+            --set image.repository=anode-registry.localhost:5432/anode \
+            --set image.tag=test \
+            --set image.pullPolicy=Always \
+            --set replicaCount=3 \
+            --set persistence.enabled=true \
+            --set persistence.size=1Gi \
+            --wait \
+            --timeout 10m
+
+      - name: Verify deployment
+        run: |
+          kubectl get all -n anode-test
+          kubectl get pvc -n anode-test
+
+      - name: Wait for pods to be ready
+        run: |
+          kubectl wait --for=condition=ready pod \
+            -l app.kubernetes.io/name=anode \
+            -n anode-test \
+            --timeout=300s
+
+      - name: Check pod status
+        run: |
+          kubectl get pods -n anode-test -o wide
+          kubectl describe pods -n anode-test
+
+      - name: Test cluster health
+        run: |
+          # Port forward to access the service
+          kubectl port-forward -n anode-test svc/anode 8080:8080 &
+          PF_PID=$!
+
+          sleep 5
+
+          # Test health endpoint
+          curl -f http://localhost:8080/health || exit 1
+
+          # Kill port forward
+          kill $PF_PID
+
+      - name: Run integration tests
+        run: |
+          # Port forward for tests
+          kubectl port-forward -n anode-test svc/anode 8080:8080 &
+          PF_PID=$!
+
+          sleep 5
+
+          # Run integration test suite
+          cd tests/integration
+          cargo test --release -- --test-threads=1 --nocapture
+
+          # Cleanup
+          kill $PF_PID
+
+      - name: Test scaling
+        run: |
+          echo "Scaling to 5 replicas..."
+          kubectl scale statefulset anode -n anode-test --replicas=5
+          kubectl wait --for=condition=ready pod \
+            -l app.kubernetes.io/name=anode \
+            -n anode-test \
+            --timeout=300s
+
+          echo "Scaling back to 3 replicas..."
+          kubectl scale statefulset anode -n anode-test --replicas=3
+          sleep 10
+
+      - name: Test rolling update
+        run: |
+          echo "Performing rolling update..."
+          kubectl set image statefulset/anode \
+            -n anode-test \
+            anode=anode-registry.localhost:5432/anode:test
+
+          kubectl rollout status statefulset/anode \
+            -n anode-test \
+            --timeout=300s
+
+      - name: Test pod failure resilience
+        run: |
+          echo "Deleting a pod to test resilience..."
+          POD=$(kubectl get pods -n anode-test -l app.kubernetes.io/name=anode -o jsonpath='{.items[0].metadata.name}')
+          kubectl delete pod $POD -n anode-test
+
+          sleep 5
+
+          kubectl wait --for=condition=ready pod \
+            -l app.kubernetes.io/name=anode \
+            -n anode-test \
+            --timeout=300s
+
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p k3d-logs
+
+          # Get all pod logs
+          for pod in $(kubectl get pods -n anode-test -o name); do
+            name=$(echo $pod | cut -d'/' -f2)
+            kubectl logs $pod -n anode-test --all-containers=true > k3d-logs/${name}.log 2>&1 || true
+            kubectl logs $pod -n anode-test --previous --all-containers=true > k3d-logs/${name}-previous.log 2>&1 || true
+          done
+
+          # Get events
+          kubectl get events -n anode-test --sort-by='.lastTimestamp' > k3d-logs/events.log
+
+          # Get describe output
+          kubectl describe all -n anode-test > k3d-logs/describe.log
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k3d-logs-${{ github.run_number }}
+          path: k3d-logs/
+
+      - name: Helm test
+        run: |
+          helm test anode -n anode-test --timeout 5m
+
+      - name: Uninstall Helm chart
+        if: always()
+        run: |
+          helm uninstall anode -n anode-test || true
+          kubectl delete namespace anode-test || true
+
+      - name: Cleanup k3d cluster
+        if: always()
+        run: |
+          k3d cluster delete anode-test || true
+          k3d registry delete anode-registry.localhost || true
+
+  k3d-chaos:
+    name: K3d Chaos Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install k3d
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=${{ env.K3D_VERSION }} bash
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install chaos-mesh
+        run: |
+          curl -sSL https://mirrors.chaos-mesh.org/latest/install.sh | bash -s -- --local kind
+
+      - name: Create k3d cluster
+        run: |
+          k3d cluster create anode-chaos \
+            --agents 3 \
+            --wait \
+            --timeout 5m
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and load image
+        run: |
+          docker build -t anode:chaos -f deploy/docker/Dockerfile .
+          k3d image import anode:chaos -c anode-chaos
+
+      - name: Deploy anode
+        run: |
+          kubectl create namespace anode-chaos
+          helm install anode deploy/helm/anode \
+            --namespace anode-chaos \
+            --set image.repository=anode \
+            --set image.tag=chaos \
+            --set image.pullPolicy=Never \
+            --set replicaCount=3 \
+            --wait \
+            --timeout 10m
+
+      - name: Apply chaos experiments
+        run: |
+          # Network partition chaos
+          cat <<EOF | kubectl apply -f -
+          apiVersion: chaos-mesh.org/v1alpha1
+          kind: NetworkChaos
+          metadata:
+            name: network-partition
+            namespace: anode-chaos
+          spec:
+            action: partition
+            mode: all
+            selector:
+              namespaces:
+                - anode-chaos
+              labelSelectors:
+                app.kubernetes.io/name: anode
+            duration: "30s"
+            direction: both
+          EOF
+
+          sleep 60
+
+          # Pod kill chaos
+          cat <<EOF | kubectl apply -f -
+          apiVersion: chaos-mesh.org/v1alpha1
+          kind: PodChaos
+          metadata:
+            name: pod-kill
+            namespace: anode-chaos
+          spec:
+            action: pod-kill
+            mode: one
+            selector:
+              namespaces:
+                - anode-chaos
+              labelSelectors:
+                app.kubernetes.io/name: anode
+            scheduler:
+              cron: "@every 2m"
+          EOF
+
+          sleep 120
+
+      - name: Verify cluster recovery
+        run: |
+          kubectl wait --for=condition=ready pod \
+            -l app.kubernetes.io/name=anode \
+            -n anode-chaos \
+            --timeout=300s
+
+      - name: Cleanup
+        if: always()
+        run: |
+          kubectl delete namespace anode-chaos || true
+          k3d cluster delete anode-chaos || true

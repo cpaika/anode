@@ -1,0 +1,57 @@
+# Clippy configuration
+
+# Cognitive complexity threshold
+cognitive-complexity-threshold = 30
+
+# Type complexity threshold
+type-complexity-threshold = 250
+
+# Single char binding threshold
+single-char-binding-names-threshold = 4
+
+# Too many arguments threshold
+too-many-arguments-threshold = 7
+
+# Too many lines threshold
+too-many-lines-threshold = 100
+
+# Large error types threshold
+large-error-threshold = 128
+
+# Verbose bit mask threshold
+verbose-bit-mask-threshold = 1
+
+# Literal representation threshold
+literal-representation-threshold = 10
+
+# Maximum struct field count without Debug
+max-struct-bools = 3
+
+# Maximum trait bounds
+max-trait-bounds = 3
+
+# Maximum function parameter count for suggestions
+max-fn-params-bools = 3
+
+# Disallowed methods
+disallowed-methods = [
+    { path = "std::env::set_var", reason = "Use configuration or environment setup instead" },
+]
+
+# Disallowed types
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "Prefer FxHashMap or BTreeMap for deterministic behavior" },
+    { path = "std::collections::HashSet", reason = "Prefer FxHashSet or BTreeSet for deterministic behavior" },
+]
+
+# Standard library items to avoid
+avoid-breaking-exported-api = true
+
+# Enforce documentation
+missing-docs-in-crate-items = true
+
+# Allowed duplicate names
+allowed-duplicate-crates = []
+
+# Msrv
+msrv = "1.75"

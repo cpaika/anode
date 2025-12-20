@@ -1,0 +1,61 @@
+---
+# Headless service for StatefulSet DNS
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "anode.headlessServiceName" . }}
+  labels:
+    {{- include "anode.labels" . | nindent 4 }}
+    service-type: headless
+  {{- with .Values.headlessService.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+  - name: s3
+    port: {{ .Values.service.s3Port }}
+    targetPort: s3
+    protocol: TCP
+  - name: admin
+    port: {{ .Values.service.adminPort }}
+    targetPort: admin
+    protocol: TCP
+  - name: grpc
+    port: {{ .Values.service.grpcPort }}
+    targetPort: grpc
+    protocol: TCP
+  selector:
+    {{- include "anode.selectorLabels" . | nindent 4 }}
+---
+# Regular service for load balancing
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "anode.fullname" . }}
+  labels:
+    {{- include "anode.labels" . | nindent 4 }}
+    service-type: loadbalancer
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  {{- if .Values.service.sessionAffinity }}
+  sessionAffinity: {{ .Values.service.sessionAffinity }}
+  {{- end }}
+  ports:
+  - name: s3
+    port: {{ .Values.service.s3Port }}
+    targetPort: s3
+    protocol: TCP
+  - name: admin
+    port: {{ .Values.service.adminPort }}
+    targetPort: admin
+    protocol: TCP
+  selector:
+    {{- include "anode.selectorLabels" . | nindent 4 }}

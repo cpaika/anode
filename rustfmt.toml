@@ -1,0 +1,57 @@
+# Edition
+edition = "2021"
+
+# Formatting options
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+
+# Imports
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+reorder_imports = true
+
+# Comments and documentation
+wrap_comments = true
+comment_width = 100
+normalize_comments = true
+normalize_doc_attributes = true
+
+# Function and method formatting
+fn_single_line = false
+where_single_line = true
+force_explicit_abi = true
+
+# Control flow formatting
+control_brace_style = "AlwaysSameLine"
+brace_style = "SameLineWhere"
+
+# Expression and statement formatting
+overflow_delimited_expr = true
+use_small_heuristics = "Default"
+
+# Type and trait formatting
+use_try_shorthand = true
+format_code_in_doc_comments = true
+
+# Match formatting
+match_arm_blocks = true
+match_block_trailing_comma = true
+
+# Array and struct formatting
+trailing_comma = "Vertical"
+trailing_semicolon = true
+
+# String formatting
+format_strings = true
+
+# Macro formatting
+format_macro_matchers = true
+format_macro_bodies = true
+
+# Miscellaneous
+newline_style = "Unix"
+remove_nested_parens = true
+reorder_impl_items = true
+struct_lit_single_line = true
+fn_params_layout = "Tall"

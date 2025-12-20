@@ -1,0 +1,273 @@
+version: '3.9'
+
+# Chaos testing environment with 5 nodes and fault injection tools
+# Usage: docker-compose -f docker-compose.chaos.yml up
+
+services:
+  # ============================================================================
+  # Anode Nodes (5-node cluster for chaos testing)
+  # ============================================================================
+  anode-1:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: chaos-anode-1
+    hostname: chaos-anode-1
+    networks:
+      - chaos-net
+    environment:
+      - ANODE_NODE_ID=1
+      - ANODE_NODE_NAME=chaos-anode-1
+      - ANODE_BIND_ADDR=0.0.0.0
+      - ANODE_ADVERTISE_ADDR=chaos-anode-1
+      - ANODE_BOOTSTRAP=true
+      - ANODE_CLUSTER_PEERS=chaos-anode-1:9090,chaos-anode-2:9090,chaos-anode-3:9090,chaos-anode-4:9090,chaos-anode-5:9090
+      - ANODE_LOG_LEVEL=debug
+    volumes:
+      - chaos-anode-1-data:/data
+      - ./config:/config:ro
+    restart: unless-stopped
+
+  anode-2:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: chaos-anode-2
+    hostname: chaos-anode-2
+    networks:
+      - chaos-net
+    environment:
+      - ANODE_NODE_ID=2
+      - ANODE_NODE_NAME=chaos-anode-2
+      - ANODE_BIND_ADDR=0.0.0.0
+      - ANODE_ADVERTISE_ADDR=chaos-anode-2
+      - ANODE_JOIN_ADDR=chaos-anode-1:9090
+      - ANODE_CLUSTER_PEERS=chaos-anode-1:9090,chaos-anode-2:9090,chaos-anode-3:9090,chaos-anode-4:9090,chaos-anode-5:9090
+      - ANODE_LOG_LEVEL=debug
+    volumes:
+      - chaos-anode-2-data:/data
+      - ./config:/config:ro
+    restart: unless-stopped
+    depends_on:
+      - anode-1
+
+  anode-3:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: chaos-anode-3
+    hostname: chaos-anode-3
+    networks:
+      - chaos-net
+    environment:
+      - ANODE_NODE_ID=3
+      - ANODE_NODE_NAME=chaos-anode-3
+      - ANODE_BIND_ADDR=0.0.0.0
+      - ANODE_ADVERTISE_ADDR=chaos-anode-3
+      - ANODE_JOIN_ADDR=chaos-anode-1:9090
+      - ANODE_CLUSTER_PEERS=chaos-anode-1:9090,chaos-anode-2:9090,chaos-anode-3:9090,chaos-anode-4:9090,chaos-anode-5:9090
+      - ANODE_LOG_LEVEL=debug
+    volumes:
+      - chaos-anode-3-data:/data
+      - ./config:/config:ro
+    restart: unless-stopped
+    depends_on:
+      - anode-1
+
+  anode-4:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: chaos-anode-4
+    hostname: chaos-anode-4
+    networks:
+      - chaos-net
+    environment:
+      - ANODE_NODE_ID=4
+      - ANODE_NODE_NAME=chaos-anode-4
+      - ANODE_BIND_ADDR=0.0.0.0
+      - ANODE_ADVERTISE_ADDR=chaos-anode-4
+      - ANODE_JOIN_ADDR=chaos-anode-1:9090
+      - ANODE_CLUSTER_PEERS=chaos-anode-1:9090,chaos-anode-2:9090,chaos-anode-3:9090,chaos-anode-4:9090,chaos-anode-5:9090
+      - ANODE_LOG_LEVEL=debug
+    volumes:
+      - chaos-anode-4-data:/data
+      - ./config:/config:ro
+    restart: unless-stopped
+    depends_on:
+      - anode-1
+
+  anode-5:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: chaos-anode-5
+    hostname: chaos-anode-5
+    networks:
+      - chaos-net
+    environment:
+      - ANODE_NODE_ID=5
+      - ANODE_NODE_NAME=chaos-anode-5
+      - ANODE_BIND_ADDR=0.0.0.0
+      - ANODE_ADVERTISE_ADDR=chaos-anode-5
+      - ANODE_JOIN_ADDR=chaos-anode-1:9090
+      - ANODE_CLUSTER_PEERS=chaos-anode-1:9090,chaos-anode-2:9090,chaos-anode-3:9090,chaos-anode-4:9090,chaos-anode-5:9090
+      - ANODE_LOG_LEVEL=debug
+    volumes:
+      - chaos-anode-5-data:/data
+      - ./config:/config:ro
+    restart: unless-stopped
+    depends_on:
+      - anode-1
+
+  # ============================================================================
+  # Toxiproxy - Network Chaos (latency, packet loss, bandwidth)
+  # ============================================================================
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.6.0
+    container_name: chaos-toxiproxy
+    hostname: toxiproxy
+    networks:
+      - chaos-net
+    ports:
+      - "8474:8474"  # API
+      - "9100:9100"  # Proxy for anode-1
+      - "9101:9101"  # Proxy for anode-2
+      - "9102:9102"  # Proxy for anode-3
+      - "9103:9103"  # Proxy for anode-4
+      - "9104:9104"  # Proxy for anode-5
+    volumes:
+      - ./config/toxiproxy.json:/config/toxiproxy.json:ro
+    command: ["-host", "0.0.0.0", "-config", "/config/toxiproxy.json"]
+    restart: unless-stopped
+
+  # ============================================================================
+  # Pumba - Container Chaos (kill, pause, stop, network)
+  # ============================================================================
+  pumba:
+    image: gaiaadm/pumba:0.9.8
+    container_name: chaos-pumba
+    hostname: pumba
+    networks:
+      - chaos-net
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: |
+      --log-level=debug
+      --random
+      --interval=5m
+      kill
+      --signal=SIGKILL
+      re2:^chaos-anode-[2-5]
+    restart: unless-stopped
+    depends_on:
+      - anode-1
+      - anode-2
+      - anode-3
+      - anode-4
+      - anode-5
+
+  # ============================================================================
+  # Chaos Test Runner - Executes test scenarios
+  # ============================================================================
+  chaos-runner:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: chaos-runner
+    hostname: chaos-runner
+    networks:
+      - chaos-net
+    volumes:
+      - ../../tests:/tests:ro
+      - ./scripts:/scripts:ro
+      - chaos-results:/results
+    environment:
+      - ANODE_TEST_MODE=chaos
+      - ANODE_CLUSTER_SIZE=5
+      - CHAOS_DURATION=3600
+      - CHAOS_SCENARIOS=partition,latency,packet_loss,node_crash,disk_full
+    entrypoint: ["/scripts/run-chaos-tests.sh"]
+    depends_on:
+      - anode-1
+      - anode-2
+      - anode-3
+      - anode-4
+      - anode-5
+      - toxiproxy
+    restart: "no"
+
+  # ============================================================================
+  # Prometheus - Chaos Metrics Collection
+  # ============================================================================
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: chaos-prometheus
+    hostname: prometheus
+    networks:
+      - chaos-net
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus-chaos.yml:/etc/prometheus/prometheus.yml:ro
+      - chaos-prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    restart: unless-stopped
+
+  # ============================================================================
+  # Grafana - Chaos Visualization
+  # ============================================================================
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: chaos-grafana
+    hostname: grafana
+    networks:
+      - chaos-net
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards/chaos:/var/lib/grafana/dashboards:ro
+      - chaos-grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  chaos-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.29.0.0/16
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  chaos-anode-1-data:
+    driver: local
+  chaos-anode-2-data:
+    driver: local
+  chaos-anode-3-data:
+    driver: local
+  chaos-anode-4-data:
+    driver: local
+  chaos-anode-5-data:
+    driver: local
+  chaos-results:
+    driver: local
+  chaos-prometheus-data:
+    driver: local
+  chaos-grafana-data:
+    driver: local

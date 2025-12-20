@@ -1,0 +1,177 @@
+name: Chaos Testing
+
+on:
+  schedule:
+    # Run nightly at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Test duration in minutes'
+        required: false
+        default: '30'
+      scenarios:
+        description: 'Comma-separated list of scenarios to run (leave empty for all)'
+        required: false
+        default: ''
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  chaos-test:
+    name: Chaos Test Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ hashFiles('deploy/docker/Dockerfile') }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build anode Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          push: false
+          load: true
+          tags: anode:chaos-test
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+
+      # Move cache to prevent cache growing indefinitely
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Install docker-compose
+        run: |
+          sudo curl -L "https://github.com/docker/compose/releases/download/v2.24.1/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+          docker-compose --version
+
+      - name: Set up chaos test environment
+        run: |
+          cd deploy/docker
+          docker-compose -f docker-compose.chaos.yml up -d --wait
+          docker-compose -f docker-compose.chaos.yml ps
+
+      - name: Wait for cluster to be ready
+        run: |
+          echo "Waiting for cluster to initialize..."
+          timeout 120 bash -c 'until docker-compose -f deploy/docker/docker-compose.chaos.yml exec -T anode-1 /bin/sh -c "curl -f http://localhost:8080/health" 2>/dev/null; do sleep 2; done'
+          echo "Cluster is ready"
+
+      - name: Run chaos test suite
+        run: |
+          DURATION=${{ github.event.inputs.duration || '30' }}
+          SCENARIOS=${{ github.event.inputs.scenarios || '' }}
+
+          cd tests/chaos
+          if [ -z "$SCENARIOS" ]; then
+            echo "Running all chaos scenarios for ${DURATION} minutes"
+            cargo test --release -- --test-threads=1 --nocapture
+          else
+            echo "Running scenarios: ${SCENARIOS} for ${DURATION} minutes"
+            for scenario in $(echo $SCENARIOS | tr ',' ' '); do
+              cargo test --release $scenario -- --nocapture
+            done
+          fi
+        env:
+          CHAOS_DURATION_MINUTES: ${{ github.event.inputs.duration || '30' }}
+
+      - name: Collect chaos test logs
+        if: always()
+        run: |
+          mkdir -p chaos-logs
+          docker-compose -f deploy/docker/docker-compose.chaos.yml logs > chaos-logs/docker-compose.log
+          for container in $(docker-compose -f deploy/docker/docker-compose.chaos.yml ps -q); do
+            name=$(docker inspect --format='{{.Name}}' $container | sed 's/\///')
+            docker logs $container > chaos-logs/${name}.log 2>&1
+          done
+
+      - name: Upload chaos test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-test-results-${{ github.run_number }}
+          path: |
+            chaos-logs/
+            tests/chaos/target/*/chaos-*.log
+
+      - name: Cleanup
+        if: always()
+        run: |
+          cd deploy/docker
+          docker-compose -f docker-compose.chaos.yml down -v
+          docker system prune -f
+
+  chaos-report:
+    name: Generate Chaos Test Report
+    runs-on: ubuntu-latest
+    needs: chaos-test
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download test results
+        uses: actions/download-artifact@v4
+        with:
+          name: chaos-test-results-${{ github.run_number }}
+          path: chaos-results
+
+      - name: Generate report
+        run: |
+          echo "# Chaos Test Report" > chaos-report.md
+          echo "" >> chaos-report.md
+          echo "**Run ID:** ${{ github.run_number }}" >> chaos-report.md
+          echo "**Date:** $(date -u)" >> chaos-report.md
+          echo "**Status:** ${{ needs.chaos-test.result }}" >> chaos-report.md
+          echo "" >> chaos-report.md
+
+          if [ -d "chaos-results" ]; then
+            echo "## Test Logs" >> chaos-report.md
+            echo "" >> chaos-report.md
+            find chaos-results -name "*.log" -type f | while read log; do
+              echo "### $(basename $log)" >> chaos-report.md
+              echo "\`\`\`" >> chaos-report.md
+              tail -n 100 "$log" >> chaos-report.md
+              echo "\`\`\`" >> chaos-report.md
+              echo "" >> chaos-report.md
+            done
+          fi
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-test-report-${{ github.run_number }}
+          path: chaos-report.md
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('chaos-report.md', 'utf8');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });

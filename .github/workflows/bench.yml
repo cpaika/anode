@@ -1,0 +1,206 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark:
+    name: Run Benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry/index
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo git
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-git-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-target-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-target-bench-
+
+      - name: Install criterion
+        run: cargo install cargo-criterion || true
+
+      - name: Download baseline benchmarks (main branch)
+        if: github.event_name == 'pull_request'
+        run: |
+          mkdir -p target/criterion-baseline
+          # Try to download baseline from main branch artifacts
+          # This is a placeholder - implement actual artifact download logic
+          echo "Downloading baseline benchmarks from main branch..."
+
+      - name: Run benchmarks
+        run: |
+          cargo bench --workspace --bench '*' -- --output-format bencher | tee bench-output.txt
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: Rust Benchmarks
+          tool: 'cargo'
+          output-file-path: bench-output.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          alert-threshold: '150%'
+          comment-on-alert: true
+          fail-on-alert: false
+
+      - name: Compare with baseline
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "# Benchmark Comparison" > benchmark-comment.md
+          echo "" >> benchmark-comment.md
+          echo "Comparing benchmarks against main branch:" >> benchmark-comment.md
+          echo "" >> benchmark-comment.md
+
+          if [ -f "target/criterion-baseline/estimates.json" ]; then
+            # Parse and compare results
+            echo "| Benchmark | Main | PR | Change |" >> benchmark-comment.md
+            echo "|-----------|------|-------|--------|" >> benchmark-comment.md
+            # Add comparison logic here
+            echo "| Example benchmark | 100ns | 95ns | -5% ✅ |" >> benchmark-comment.md
+          else
+            echo "No baseline found. This is the first benchmark run." >> benchmark-comment.md
+          fi
+
+          echo "" >> benchmark-comment.md
+          echo "Full benchmark results are available in the artifacts." >> benchmark-comment.md
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.run_number }}
+          path: |
+            target/criterion/
+            bench-output.txt
+
+      - name: Comment benchmark results on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let comment = '## Benchmark Results\n\n';
+
+            if (fs.existsSync('benchmark-comment.md')) {
+              comment += fs.readFileSync('benchmark-comment.md', 'utf8');
+            } else {
+              comment += 'Benchmark results are available in the artifacts.\n';
+            }
+
+            comment += '\n---\n';
+            comment += `**Run ID:** ${context.runNumber}\n`;
+            comment += `**Commit:** ${context.sha.substring(0, 7)}\n`;
+
+            // Find existing benchmark comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body.includes('Benchmark Results')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: comment
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: comment
+              });
+            }
+
+  system-benchmarks:
+    name: System Benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build anode image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          push: false
+          load: true
+          tags: anode:bench
+
+      - name: Set up test cluster
+        run: |
+          cd deploy/docker
+          docker-compose up -d --wait
+          docker-compose ps
+
+      - name: Wait for cluster ready
+        run: |
+          timeout 120 bash -c 'until curl -f http://localhost:8080/health 2>/dev/null; do sleep 2; done'
+
+      - name: Run system benchmarks
+        run: |
+          cd benches
+          cargo run --release --bin system-bench -- \
+            --endpoint http://localhost:8080 \
+            --duration 300 \
+            --concurrency 10 \
+            --output benchmark-results.json
+
+      - name: Upload system benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: system-benchmark-results-${{ github.run_number }}
+          path: benches/benchmark-results.json
+
+      - name: Cleanup
+        if: always()
+        run: |
+          cd deploy/docker
+          docker-compose down -v

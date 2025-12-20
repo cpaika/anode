@@ -1,0 +1,37 @@
+# Benchmark results
+results/
+*.log
+
+# Profiling data
+profiling/
+flamegraph.svg
+perf.data
+perf.data.old
+
+# Criterion output (also in target/criterion but sometimes copied)
+criterion/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Temporary files
+*.tmp
+*.temp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Comparison outputs
+comparison.html
+comparison.txt
+comparison_summary.txt

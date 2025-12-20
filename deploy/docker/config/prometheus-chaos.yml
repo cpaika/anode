@@ -1,0 +1,40 @@
+# Prometheus configuration for Anode chaos testing cluster
+
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+  external_labels:
+    cluster: 'anode-chaos'
+    environment: 'chaos-testing'
+
+# Scrape configurations
+scrape_configs:
+  # Anode chaos nodes (5 nodes)
+  - job_name: 'anode-chaos-nodes'
+    static_configs:
+      - targets:
+          - 'chaos-anode-1:8081'
+          - 'chaos-anode-2:8081'
+          - 'chaos-anode-3:8081'
+          - 'chaos-anode-4:8081'
+          - 'chaos-anode-5:8081'
+        labels:
+          cluster: 'anode-chaos'
+          test: 'chaos'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # Toxiproxy metrics
+  - job_name: 'toxiproxy'
+    static_configs:
+      - targets:
+          - 'toxiproxy:8474'
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets:
+          - 'localhost:9090'

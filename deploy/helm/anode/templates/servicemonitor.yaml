@@ -1,0 +1,29 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "anode.fullname" . }}
+  labels:
+    {{- include "anode.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "anode.selectorLabels" . | nindent 6 }}
+      service-type: loadbalancer
+  endpoints:
+  - port: admin
+    path: {{ .Values.config.metrics.path }}
+    interval: {{ .Values.monitoring.serviceMonitor.interval }}
+    scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
+    {{- with .Values.monitoring.serviceMonitor.relabelings }}
+    relabelings:
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.monitoring.serviceMonitor.metricRelabelings }}
+    metricRelabelings:
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

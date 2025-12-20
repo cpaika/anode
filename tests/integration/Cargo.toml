@@ -1,0 +1,51 @@
+[package]
+name = "anode-integration-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[test]]
+name = "integration"
+path = "src/main.rs"
+
+[dependencies]
+# Test harness
+anode-test-harness = { path = "../harness" }
+anode-client = { path = "../../crates/anode-client" }
+
+# Async runtime
+tokio = { version = "1.41", features = ["full", "test-util"] }
+async-trait = "0.1"
+
+# AWS SDK for integration testing
+aws-sdk-s3 = "1"
+aws-config = "1"
+aws-credential-types = "1"
+
+# Utilities
+rand = "0.8"
+tempfile = "3.14"
+bytes = "1.9"
+futures = "0.3"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Testing
+serial_test = "3"
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Time
+chrono = "0.4"
+
+# HTTP
+reqwest = { version = "0.12", features = ["json", "stream"] }

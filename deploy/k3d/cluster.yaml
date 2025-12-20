@@ -1,0 +1,31 @@
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: anode-test
+servers: 1
+agents: 3
+image: rancher/k3s:v1.28.4-k3s1
+ports:
+  - port: 8080:80
+    nodeFilters:
+      - loadbalancer
+  - port: 8443:443
+    nodeFilters:
+      - loadbalancer
+options:
+  k3d:
+    wait: true
+    timeout: "120s"
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true
+registries:
+  create:
+    name: anode-registry.localhost
+    host: "0.0.0.0"
+    hostPort: "5111"

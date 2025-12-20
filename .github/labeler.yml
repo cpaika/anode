@@ -1,0 +1,67 @@
+# Automatically label PRs based on changed files
+
+# Core components
+'area/storage':
+  - 'crates/anode-storage/**/*'
+
+'area/raft':
+  - 'crates/anode-raft/**/*'
+
+'area/s3':
+  - 'crates/anode-s3/**/*'
+
+'area/protocol':
+  - 'crates/anode-protocol/**/*'
+  - 'proto/**/*'
+
+'area/parquet':
+  - 'crates/anode-parquet/**/*'
+
+'area/client':
+  - 'crates/anode-client/**/*'
+
+# Infrastructure
+'area/ci-cd':
+  - '.github/**/*'
+
+'area/docker':
+  - 'deploy/docker/**/*'
+  - '**/Dockerfile'
+  - '**/docker-compose*.yml'
+
+'area/kubernetes':
+  - 'deploy/helm/**/*'
+  - 'deploy/k3d/**/*'
+
+# Testing
+'area/tests':
+  - 'tests/**/*'
+  - 'benches/**/*'
+
+'area/chaos':
+  - 'tests/chaos/**/*'
+
+'area/benchmarks':
+  - 'benches/**/*'
+
+# Documentation
+'documentation':
+  - '**/*.md'
+  - 'docs/**/*'
+
+# Dependencies
+'dependencies':
+  - '**/Cargo.toml'
+  - 'Cargo.lock'
+
+# Configuration
+'configuration':
+  - '**/*.toml'
+  - '**/*.yaml'
+  - '**/*.yml'
+  - '**/*.json'
+  - '.cargo/**/*'
+  - 'rust-toolchain.toml'
+  - 'rustfmt.toml'
+  - 'clippy.toml'
+  - 'deny.toml'
