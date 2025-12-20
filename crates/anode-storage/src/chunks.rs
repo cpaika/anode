@@ -526,4 +526,16 @@ mod tests {
         let retrieved = manager.retrieve_chunks(&chunk_ids).await.unwrap();
         assert_eq!(retrieved, large_data);
     }
+
+    #[test]
+    fn test_split_into_chunks_exactly_4mb() {
+        // Test with exactly 4MB (the chunk size boundary)
+        let exact_4mb_data = vec![0u8; CHUNK_SIZE];
+        let chunks = ChunkManager::split_into_chunks(&exact_4mb_data);
+
+        // Should create exactly 1 chunk since 4MB is exactly the chunk size
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].size, CHUNK_SIZE);
+        assert_eq!(chunks[0].data.len(), CHUNK_SIZE);
+    }
 }
