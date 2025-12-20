@@ -30,7 +30,7 @@ Run `/todo-all` to process all tasks sequentially with subagents.
 ## Phase 1: Storage Engine Unit Tests
 
 - [x] Add unit test for ChunkManager::split_into_chunks with 0 byte input
-- [ ] Add unit test for ChunkManager::split_into_chunks with 1 byte input
+- [x] Add unit test for ChunkManager::split_into_chunks with 1 byte input
 - [ ] Add unit test for ChunkManager::split_into_chunks with exactly 4MB input
 - [ ] Add unit test for ChunkManager::split_into_chunks with 4MB+1 byte input
 - [ ] Add unit test for ChunkManager::split_into_chunks with 100MB input

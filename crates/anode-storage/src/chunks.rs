@@ -313,6 +313,22 @@ mod tests {
     }
 
     #[test]
+    fn test_split_into_chunks_one_byte() {
+        // Test with 1 byte input
+        let one_byte_data = &[42u8];
+        let chunks = ChunkManager::split_into_chunks(one_byte_data);
+
+        // Should return exactly one chunk
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].size, 1);
+        assert_eq!(chunks[0].data, vec![42u8]);
+
+        // Verify chunk ID is computed correctly
+        let expected_id = compute_chunk_id(one_byte_data);
+        assert_eq!(chunks[0].id, expected_id);
+    }
+
+    #[test]
     fn test_split_into_chunks() {
         // Test empty data
         let chunks = ChunkManager::split_into_chunks(&[]);
