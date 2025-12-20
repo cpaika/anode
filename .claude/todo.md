@@ -31,9 +31,9 @@ Run `/todo-all` to process all tasks sequentially with subagents.
 
 - [x] Add unit test for ChunkManager::split_into_chunks with 0 byte input
 - [x] Add unit test for ChunkManager::split_into_chunks with 1 byte input
-- [ ] Add unit test for ChunkManager::split_into_chunks with exactly 4MB input
-- [ ] Add unit test for ChunkManager::split_into_chunks with 4MB+1 byte input
-- [ ] Add unit test for ChunkManager::split_into_chunks with 100MB input
+- [x] Add unit test for ChunkManager::split_into_chunks with exactly 4MB input
+- [x] Add unit test for ChunkManager::split_into_chunks with 4MB+1 byte input
+- [x] Add unit test for ChunkManager::split_into_chunks with 100MB input
 - [ ] Add unit test for ChunkId::from_content produces consistent SHA-256 hash
 - [ ] Add unit test for identical content produces identical ChunkId (deduplication)
 - [ ] Add unit test for ChunkManager::retrieve_chunks roundtrip with small data

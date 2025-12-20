@@ -554,4 +554,25 @@ mod tests {
         let total_size: usize = chunks.iter().map(|c| c.size).sum();
         assert_eq!(total_size, CHUNK_SIZE + 1);
     }
+
+    #[test]
+    fn test_split_into_chunks_100mb() {
+        // Test with 100MB input (large data)
+        let size_100mb = 100 * 1024 * 1024; // 100MB
+        let data = vec![0u8; size_100mb];
+        let chunks = ChunkManager::split_into_chunks(&data);
+
+        // Should create exactly 25 chunks (100MB / 4MB = 25)
+        assert_eq!(chunks.len(), 25);
+
+        // All chunks should be exactly CHUNK_SIZE (4MB)
+        for chunk in &chunks {
+            assert_eq!(chunk.size, CHUNK_SIZE);
+            assert_eq!(chunk.data.len(), CHUNK_SIZE);
+        }
+
+        // Verify total size matches input
+        let total_size: usize = chunks.iter().map(|c| c.size).sum();
+        assert_eq!(total_size, size_100mb);
+    }
 }
