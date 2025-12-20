@@ -538,4 +538,20 @@ mod tests {
         assert_eq!(chunks[0].size, CHUNK_SIZE);
         assert_eq!(chunks[0].data.len(), CHUNK_SIZE);
     }
+
+    #[test]
+    fn test_split_into_chunks_4mb_plus_one_byte() {
+        // Test with 4MB+1 byte (just over the chunk size boundary)
+        let data = vec![0u8; CHUNK_SIZE + 1];
+        let chunks = ChunkManager::split_into_chunks(&data);
+
+        // Should create exactly 2 chunks since it's 1 byte over the 4MB boundary
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].size, CHUNK_SIZE);
+        assert_eq!(chunks[1].size, 1);
+
+        // Verify total size matches input
+        let total_size: usize = chunks.iter().map(|c| c.size).sum();
+        assert_eq!(total_size, CHUNK_SIZE + 1);
+    }
 }
