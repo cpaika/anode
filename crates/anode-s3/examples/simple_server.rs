@@ -12,7 +12,7 @@
 //   aws --endpoint-url http://localhost:8080 s3 ls s3://my-bucket
 
 use anode_s3::{AuthConfig, S3Router};
-use anode_storage::StorageEngine;
+use anode_storage::{StorageEngine, StorageConfig};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -25,9 +25,8 @@ async fn main() {
 
     // Create storage engine
     let data_dir = PathBuf::from("./data");
-    let storage = Arc::new(
-        StorageEngine::new(data_dir).expect("Failed to create storage engine"),
-    );
+    let config = StorageConfig::new(data_dir);
+    let storage = Arc::new(StorageEngine::open(config).await.unwrap());
 
     // Configure authentication (optional)
     let auth = if std::env::var("S3_DISABLE_AUTH").is_ok() {
