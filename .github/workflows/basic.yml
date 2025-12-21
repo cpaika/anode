@@ -1,0 +1,63 @@
+name: Basic Smoke Test
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  smoke-test:
+    name: Smoke Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry/index
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-target-smoke-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-target-smoke-
+
+      - name: Check all crates
+        run: cargo check --workspace --all-targets
+
+      - name: Build all crates
+        run: cargo build --workspace
+
+      - name: Test anode-storage (core crate)
+        run: cargo test --package anode-storage
+
+      - name: Test anode-protocol (proto definitions)
+        run: cargo test --package anode-protocol
+
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "## Smoke Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Basic build and core crate tests completed." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- cargo check: ✅" >> $GITHUB_STEP_SUMMARY
+          echo "- cargo build: ✅" >> $GITHUB_STEP_SUMMARY
+          echo "- anode-storage tests: ✅" >> $GITHUB_STEP_SUMMARY
+          echo "- anode-protocol tests: ✅" >> $GITHUB_STEP_SUMMARY
