@@ -1,0 +1,124 @@
+name: Helm Chart Validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'deploy/helm/**'
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/helm/**'
+  workflow_dispatch:
+
+jobs:
+  helm-lint:
+    name: Helm Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Lint Helm chart
+        run: helm lint deploy/helm/anode
+
+  helm-template:
+    name: Helm Template
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Template Helm chart
+        run: |
+          helm template anode deploy/helm/anode > /tmp/templated.yaml
+          echo "Successfully templated Helm chart"
+
+      - name: Validate templated YAML
+        run: |
+          # Check that the templated output is valid YAML
+          if ! command -v yamllint &> /dev/null; then
+            pip install yamllint
+          fi
+          yamllint -d relaxed /tmp/templated.yaml
+
+      - name: Template with custom values
+        run: |
+          # Test with different replica counts
+          helm template anode deploy/helm/anode --set replicaCount=3 > /tmp/templated-3.yaml
+          echo "Successfully templated with 3 replicas"
+
+          # Test with custom image
+          helm template anode deploy/helm/anode \
+            --set image.repository=custom/anode \
+            --set image.tag=latest > /tmp/templated-custom.yaml
+          echo "Successfully templated with custom image"
+
+      - name: Upload templated charts
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-templates
+          path: |
+            /tmp/templated.yaml
+            /tmp/templated-3.yaml
+            /tmp/templated-custom.yaml
+
+  kubeval:
+    name: Kubernetes Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Install kubeconform
+        run: |
+          wget https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+          tar xf kubeconform-linux-amd64.tar.gz
+          sudo mv kubeconform /usr/local/bin
+
+      - name: Validate Kubernetes manifests
+        run: |
+          helm template anode deploy/helm/anode | kubeconform \
+            -summary \
+            -output json \
+            -kubernetes-version 1.28.0 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            -strict \
+            -ignore-missing-schemas
+
+  helm-summary:
+    name: Helm Validation Summary
+    runs-on: ubuntu-latest
+    needs: [helm-lint, helm-template, kubeval]
+    if: always()
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## Helm Chart Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Results" >> $GITHUB_STEP_SUMMARY
+          echo "- Helm Lint: ${{ needs.helm-lint.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Helm Template: ${{ needs.helm-template.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Kubernetes Validation: ${{ needs.kubeval.result }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check for failures
+        if: ${{ contains(needs.*.result, 'failure') }}
+        run: |
+          echo "::error::Helm chart validation failed"
+          exit 1
