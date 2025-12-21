@@ -222,6 +222,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -240,6 +241,9 @@ jobs:
     needs: [create-release, build-docker]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -254,13 +258,23 @@ jobs:
           sed -i "s/^version:.*/version: $VERSION/" deploy/helm/anode/Chart.yaml
           sed -i "s/^appVersion:.*/appVersion: $VERSION/" deploy/helm/anode/Chart.yaml
 
+          # Update image tags in values.yaml to match release version
+          sed -i "s/tag:.*/tag: $VERSION/" deploy/helm/anode/values.yaml
+
+      - name: Validate Helm chart
+        run: |
+          cd deploy/helm
+          helm lint anode --strict
+          helm template anode anode > /dev/null
+          echo "Helm chart validation successful"
+
       - name: Package Helm chart
         run: |
           cd deploy/helm
           helm package anode
           helm repo index . --url https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
 
-      - name: Upload Helm chart to release
+      - name: Upload Helm chart to GitHub Release
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -269,6 +283,19 @@ jobs:
           files: |
             deploy/helm/anode-${{ needs.create-release.outputs.version }}.tgz
             deploy/helm/index.yaml
+
+      - name: Log in to GitHub Container Registry (OCI)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Helm chart to OCI registry
+        run: |
+          cd deploy/helm
+          helm push anode-${{ needs.create-release.outputs.version }}.tgz oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts
+          echo "Helm chart pushed to OCI registry: oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts/anode:${{ needs.create-release.outputs.version }}"
 
   release-summary:
     name: Release Summary
@@ -287,6 +314,23 @@ jobs:
           echo "- Binaries: ${{ needs.build-binaries.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- Docker: ${{ needs.build-docker.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- Helm: ${{ needs.package-helm.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Installation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Docker:**" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ghcr.io/${{ github.repository }}:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Helm (GitHub Release):**" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "helm install anode https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/anode-${{ needs.create-release.outputs.version }}.tgz" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Helm (OCI Registry):**" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "helm install anode oci://ghcr.io/${{ github.repository_owner }}/charts/anode --version ${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Notify on failure
         if: ${{ contains(needs.*.result, 'failure') }}

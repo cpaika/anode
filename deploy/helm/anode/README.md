@@ -22,24 +22,47 @@ Distributed object storage for small clusters with S3 API compatibility, Raft co
 
 ## Installation
 
-### Add Helm Repository
+### Method 1: GitHub Release (Recommended for quick start)
+
+Install directly from a GitHub release:
 
 ```bash
-helm repo add anode https://charts.anode.io
-helm repo update
-```
-
-### Install Chart
-
-```bash
-# Install with default configuration (3 nodes)
-helm install anode anode/anode -n anode --create-namespace
+# Install from specific version
+helm install anode https://github.com/anode/anode/releases/download/v0.1.0/anode-0.1.0.tgz \
+  -n anode --create-namespace
 
 # Install with custom values
-helm install anode anode/anode -n anode --create-namespace -f custom-values.yaml
+helm install anode https://github.com/anode/anode/releases/download/v0.1.0/anode-0.1.0.tgz \
+  -n anode --create-namespace -f custom-values.yaml
+```
 
-# Install from local chart directory
+### Method 2: OCI Registry (Recommended for production)
+
+Pull from GitHub Container Registry (available for releases v0.1.0+):
+
+```bash
+# Install from OCI registry
+helm install anode oci://ghcr.io/anode/charts/anode \
+  --version 0.1.0 \
+  -n anode --create-namespace
+
+# Install with custom values
+helm install anode oci://ghcr.io/anode/charts/anode \
+  --version 0.1.0 \
+  -n anode --create-namespace \
+  -f custom-values.yaml
+```
+
+### Method 3: Local Development
+
+Install from local chart directory:
+
+```bash
+# Install from local chart
 helm install anode ./deploy/helm/anode -n anode --create-namespace
+
+# Install with custom values
+helm install anode ./deploy/helm/anode -n anode --create-namespace -f custom-values.yaml
 ```
 
 ## Configuration
