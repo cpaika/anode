@@ -16,7 +16,6 @@ jobs:
     name: Create Release
     runs-on: ubuntu-latest
     outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
       version: ${{ steps.get_version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
@@ -27,36 +26,75 @@ jobs:
         id: get_version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
+      - name: Validate semantic version
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$'; then
+            echo "::error::Invalid semantic version: $VERSION"
+            echo "Expected format: MAJOR.MINOR.PATCH[-PRERELEASE]"
+            exit 1
+          fi
+          echo "Valid semantic version: $VERSION"
+
+      - name: Install git-cliff
+        run: |
+          curl -sSL https://github.com/orhun/git-cliff/releases/download/v2.7.0/git-cliff-2.7.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          sudo mv git-cliff-*/git-cliff /usr/local/bin/
+          git-cliff --version
+
       - name: Generate changelog
         id: changelog
         run: |
           # Get previous tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
 
-          if [ -z "$PREV_TAG" ]; then
-            echo "## Changes" > changelog.md
-            git log --pretty=format:"- %s (%h)" >> changelog.md
-          else
-            echo "## Changes since $PREV_TAG" > changelog.md
-            git log $PREV_TAG..HEAD --pretty=format:"- %s (%h)" >> changelog.md
-          fi
+          # Generate changelog with git-cliff if available, fallback to git log
+          if command -v git-cliff &> /dev/null; then
+            if [ -z "$PREV_TAG" ]; then
+              # First release - include all commits
+              git-cliff --strip all --unreleased --tag ${{ github.ref_name }} -o changelog.md
+            else
+              # Subsequent release - include changes since previous tag
+              git-cliff --strip all $PREV_TAG..${{ github.ref_name }} -o changelog.md
+            fi
 
-          echo "" >> changelog.md
-          echo "" >> changelog.md
-          echo "## Contributors" >> changelog.md
-          git log $PREV_TAG..HEAD --pretty=format:"- @%an" | sort | uniq >> changelog.md
+            # Add contributors section
+            echo "" >> changelog.md
+            echo "## Contributors" >> changelog.md
+            if [ -z "$PREV_TAG" ]; then
+              git log --pretty=format:"- @%an" | sort | uniq >> changelog.md
+            else
+              git log $PREV_TAG..HEAD --pretty=format:"- @%an" | sort | uniq >> changelog.md
+            fi
+          else
+            # Fallback to simple git log if git-cliff is not available
+            if [ -z "$PREV_TAG" ]; then
+              echo "## Changes" > changelog.md
+              git log --pretty=format:"- %s (%h)" >> changelog.md
+            else
+              echo "## Changes since $PREV_TAG" > changelog.md
+              git log $PREV_TAG..HEAD --pretty=format:"- %s (%h)" >> changelog.md
+            fi
+
+            echo "" >> changelog.md
+            echo "" >> changelog.md
+            echo "## Contributors" >> changelog.md
+            git log $PREV_TAG..HEAD --pretty=format:"- @%an" | sort | uniq >> changelog.md
+          fi
 
       - name: Create GitHub Release
         id: create_release
-        uses: actions/create-release@v1
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: ${{ github.ref }}
-          release_name: Release ${{ steps.get_version.outputs.version }}
+          name: Release ${{ steps.get_version.outputs.version }}
           body_path: changelog.md
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: false
 
   build-binaries:
     name: Build Binary (${{ matrix.target }})
@@ -140,25 +178,15 @@ jobs:
           tar czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.artifact_name }}
           shasum -a 256 ${{ matrix.asset_name }}.tar.gz > ${{ matrix.asset_name }}.tar.gz.sha256
 
-      - name: Upload release asset
-        uses: actions/upload-release-asset@v1
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: target/${{ matrix.target }}/release/${{ matrix.asset_name }}.tar.gz
-          asset_name: ${{ matrix.asset_name }}.tar.gz
-          asset_content_type: application/gzip
-
-      - name: Upload checksum
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: target/${{ matrix.target }}/release/${{ matrix.asset_name }}.tar.gz.sha256
-          asset_name: ${{ matrix.asset_name }}.tar.gz.sha256
-          asset_content_type: text/plain
+          tag_name: ${{ github.ref }}
+          files: |
+            target/${{ matrix.target }}/release/${{ matrix.asset_name }}.tar.gz
+            target/${{ matrix.target }}/release/${{ matrix.asset_name }}.tar.gz.sha256
 
   build-docker:
     name: Build and Push Docker Images
@@ -233,14 +261,14 @@ jobs:
           helm repo index . --url https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
 
       - name: Upload Helm chart to release
-        uses: actions/upload-release-asset@v1
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: deploy/helm/anode-${{ needs.create-release.outputs.version }}.tgz
-          asset_name: anode-helm-chart-${{ needs.create-release.outputs.version }}.tgz
-          asset_content_type: application/gzip
+          tag_name: ${{ github.ref }}
+          files: |
+            deploy/helm/anode-${{ needs.create-release.outputs.version }}.tgz
+            deploy/helm/index.yaml
 
   release-summary:
     name: Release Summary
