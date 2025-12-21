@@ -121,16 +121,18 @@ startupProbe:
 config:
   # Cluster configuration
   cluster:
-    # Number of placement groups for data distribution
-    placementGroups: 16
+    # Number of placement groups for data distribution (default: 128)
+    # More placement groups = better distribution, but more metadata overhead
+    placementGroups: 128
     # Replication factor for data redundancy
     replicationFactor: 3
     # Cluster ID (auto-generated if empty)
     clusterId: ""
-    # Election timeout in milliseconds
-    electionTimeoutMs: 1000
-    # Heartbeat interval in milliseconds
-    heartbeatIntervalMs: 250
+    # Election timeout in milliseconds (default: 3000)
+    # Should be significantly larger than heartbeat_interval_ms
+    electionTimeoutMs: 3000
+    # Heartbeat interval in milliseconds (default: 1000)
+    heartbeatIntervalMs: 1000
 
   # Storage configuration
   storage:
@@ -138,59 +140,71 @@ config:
     chunkSize: "4MB"
     # Data directory (mounted from PVC)
     dataDir: /data
-    # Enable direct I/O for better performance
-    directIO: false
-    # Sync policy: always, periodic, or never
-    syncPolicy: periodic
-    # Sync interval in seconds (if periodic)
-    syncIntervalSecs: 5
+    # Whether to sync writes to disk (fsync)
+    syncWrites: false
+    # Maximum cache size for metadata in bytes (default: 100MB)
+    metadataCacheSize: 104857600
+    # Number of worker threads for I/O operations (0 = auto-detect CPU cores)
+    ioThreads: 0
 
   # S3 API configuration
   s3:
-    enabled: true
+    # Maximum request body size in bytes (default: 5GB)
+    maxBodySize: 5368709120
+    # Request timeout in seconds
+    requestTimeoutSecs: 300
+    # Enable multipart upload support
+    enableMultipart: true
+    # Minimum part size for multipart uploads (5MB minimum per S3 spec)
+    minPartSize: 5242880
     # Virtual host style (true) or path style (false)
     virtualHostStyle: false
-    # Maximum object size
-    maxObjectSize: "5TB"
-    # Multipart upload part size limits
-    multipart:
-      minPartSize: "5MB"
-      maxPartSize: "5GB"
-      maxParts: 10000
 
   # Parquet-aware features
   parquet:
-    # Enable parquet metadata caching
-    cacheEnabled: true
-    # Cache size in MB
-    cacheSizeMb: 256
-    # Auto-detect parquet files
-    autoDetect: true
-    # Cache metadata for these extensions
-    extensions:
-      - .parquet
-      - .pq
+    # Enable Parquet metadata caching
+    enableCache: true
+    # Parquet cache size in bytes (default: 256MB)
+    cacheSize: 268435456
+    # Number of rows per row group
+    rowGroupSize: 100000
+    # Enable predicate pushdown optimization
+    enablePredicatePushdown: true
+    # Enable column pruning optimization
+    enableColumnPruning: true
+
+  # Raft consensus configuration
+  raft:
+    # Snapshot interval in log entries
+    snapshotInterval: 10000
+    # Maximum number of log entries to keep in memory
+    maxLogEntries: 100000
+    # Compaction threshold - trigger compaction after this many log entries
+    compactionThreshold: 50000
+    # Enable log compaction
+    enableCompaction: true
 
   # Logging configuration
   logging:
+    # Log level: trace, debug, info, warn, error
     level: info
-    format: json
-    # Log to stdout
-    stdout: true
-    # Optional: log to file
-    file:
-      enabled: false
-      path: /var/log/anode/anode.log
-      maxSizeMb: 100
-      maxBackups: 5
+    # Enable JSON formatted logs
+    jsonFormat: true
+    # Log file path (empty = stdout only)
+    file: ""
+    # Enable log rotation
+    rotate: false
+    # Maximum log file size before rotation in bytes (default: 100MB)
+    maxSize: 104857600
 
   # Metrics configuration
   metrics:
+    # Enable Prometheus metrics
     enabled: true
-    # Prometheus format
-    format: prometheus
-    # Metrics endpoint path
-    path: /metrics
+    # Metrics collection interval in seconds
+    intervalSecs: 15
+    # Retention period for metrics in seconds (0 = infinite)
+    retentionSecs: 0
 
 # S3 credentials (will be stored in a Secret)
 s3Credentials:
@@ -220,20 +234,29 @@ monitoring:
     interval: 30s
     scrapeTimeout: 10s
     labels: {}
+    annotations: {}
+    # namespace: monitoring  # Optional: deploy ServiceMonitor to different namespace
+    # namespaceSelector: {}  # Optional: select namespaces to monitor
+    # scheme: http  # Optional: http or https
+    # tlsConfig: {}  # Optional: TLS configuration
     relabelings: []
     metricRelabelings: []
+    # targetLabels: []  # Optional: labels to transfer from service to metrics
+    # podTargetLabels: []  # Optional: labels to transfer from pod to metrics
 
   prometheusRule:
     enabled: false
     labels: {}
-    rules: []
-    # - alert: AnodeNodeDown
-    #   expr: up{job="anode"} == 0
+    annotations: {}
+    # namespace: monitoring  # Optional: deploy PrometheusRule to different namespace
+    additionalRules: []
+    # - alert: CustomAlert
+    #   expr: custom_metric > 100
     #   for: 5m
     #   labels:
-    #     severity: critical
+    #     severity: warning
     #   annotations:
-    #     summary: "Anode node is down"
+    #     summary: "Custom alert"
 
 # Pod Disruption Budget
 podDisruptionBudget:

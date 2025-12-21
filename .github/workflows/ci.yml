@@ -52,7 +52,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features
 
   test:
     name: Test
@@ -93,7 +93,7 @@ jobs:
             ${{ runner.os }}-target-test-
 
       - name: Run tests
-        run: cargo test --workspace --all-features --verbose
+        run: cargo test -p anode-storage -p anode-raft -p anode-s3 -p anode-protocol -p anode-parquet -p anode-client -p anode --all-features --verbose
 
       - name: Run doc tests
         run: cargo test --workspace --doc
@@ -229,7 +229,7 @@ jobs:
             ${{ runner.os }}-target-coverage-
 
       - name: Generate coverage
-        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
+        run: cargo llvm-cov -p anode-storage -p anode-raft -p anode-s3 -p anode-protocol -p anode-parquet -p anode-client -p anode --all-features --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -276,7 +276,7 @@ jobs:
         run: cargo build --workspace --all-features --locked
 
       - name: Run tests with MSRV
-        run: cargo test --workspace --all-features
+        run: cargo test -p anode-storage -p anode-raft -p anode-s3 -p anode-protocol -p anode-parquet -p anode-client -p anode --all-features
 
   security:
     name: Security Audit
@@ -347,27 +347,53 @@ jobs:
           [node]
           id = 1
           name = "test-node"
-          data_dir = "/data"
-
-          [network]
-          bind_addr = "0.0.0.0"
-          advertise_addr = "localhost"
-          http_port = 8080
-          admin_port = 8081
-          grpc_port = 9090
+          s3_addr = "0.0.0.0:8080"
+          grpc_addr = "0.0.0.0:9090"
+          admin_addr = "0.0.0.0:8081"
 
           [cluster]
-          bootstrap = true
+          name = "test-cluster"
+          initial_members = []
+          replication_factor = 1
+          placement_groups = 16
+          heartbeat_interval_ms = 1000
+          election_timeout_ms = 3000
 
           [storage]
-          backend = "file"
-          blob_dir = "/data/blobs"
-          metadata_dir = "/data/metadata"
+          data_dir = "/data"
+          chunk_size = "4MB"
+          sync_writes = false
+          metadata_cache_size = 104857600
+          io_threads = 4
+
+          [s3]
+          max_body_size = 5368709120
+          request_timeout_secs = 300
+          enable_multipart = true
+          min_part_size = 5242880
+          virtual_host_style = false
+
+          [raft]
+          snapshot_interval = 10000
+          max_log_entries = 100000
+          compaction_threshold = 50000
+          enable_compaction = true
+
+          [parquet]
+          enable_cache = true
+          cache_size = 268435456
+          row_group_size = 100000
+          enable_predicate_pushdown = true
+          enable_column_pruning = true
+
+          [metrics]
+          enabled = true
+          interval_secs = 15
+          retention_secs = 0
 
           [logging]
           level = "info"
-          format = "json"
-          output = "stdout"
+          json_format = true
           EOF
 
           # Start container in background

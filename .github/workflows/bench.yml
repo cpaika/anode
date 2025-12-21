@@ -2,9 +2,12 @@ name: Benchmarks
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
+  schedule:
+    # Run benchmarks weekly on Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
   workflow_dispatch:
 
 env:
@@ -16,6 +19,9 @@ jobs:
     name: Run Benchmarks
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,6 +29,10 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -48,62 +58,189 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-target-bench-
 
-      - name: Install criterion
-        run: cargo install cargo-criterion || true
-
-      - name: Download baseline benchmarks (main branch)
+      - name: Download baseline benchmarks from main branch
         if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          workflow: bench.yml
+          branch: ${{ github.base_ref }}
+          name: benchmark-results-main
+          path: baseline-results
+
+      - name: Copy baseline to criterion directory
+        if: github.event_name == 'pull_request' && hashFiles('baseline-results/criterion/**') != ''
         run: |
           mkdir -p target/criterion-baseline
-          # Try to download baseline from main branch artifacts
-          # This is a placeholder - implement actual artifact download logic
-          echo "Downloading baseline benchmarks from main branch..."
+          if [ -d "baseline-results/criterion" ]; then
+            cp -r baseline-results/criterion/* target/criterion-baseline/
+            echo "Baseline benchmarks loaded successfully"
+          else
+            echo "No baseline benchmarks found"
+          fi
 
       - name: Run benchmarks
         run: |
-          cargo bench --workspace --bench '*' -- --output-format bencher | tee bench-output.txt
+          cd benches
+          ./run_benchmarks.sh
 
-      - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@v1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        with:
-          name: Rust Benchmarks
-          tool: 'cargo'
-          output-file-path: bench-output.txt
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: true
-          alert-threshold: '150%'
-          comment-on-alert: true
-          fail-on-alert: false
-
-      - name: Compare with baseline
-        if: github.event_name == 'pull_request'
+      - name: Generate benchmark report
         run: |
-          echo "# Benchmark Comparison" > benchmark-comment.md
-          echo "" >> benchmark-comment.md
-          echo "Comparing benchmarks against main branch:" >> benchmark-comment.md
-          echo "" >> benchmark-comment.md
+          cd benches
+          python3 generate_report.py --output BENCHMARKS.md
 
-          if [ -f "target/criterion-baseline/estimates.json" ]; then
-            # Parse and compare results
-            echo "| Benchmark | Main | PR | Change |" >> benchmark-comment.md
-            echo "|-----------|------|-------|--------|" >> benchmark-comment.md
-            # Add comparison logic here
-            echo "| Example benchmark | 100ns | 95ns | -5% ✅ |" >> benchmark-comment.md
-          else
-            echo "No baseline found. This is the first benchmark run." >> benchmark-comment.md
-          fi
+      - name: Generate comparison report for PR
+        if: github.event_name == 'pull_request' && hashFiles('baseline-results/criterion/**') != ''
+        continue-on-error: true
+        run: |
+          cd benches
 
-          echo "" >> benchmark-comment.md
-          echo "Full benchmark results are available in the artifacts." >> benchmark-comment.md
+          # Create a markdown comparison report
+          cat > comparison_report.md << 'EOF'
+          ## Benchmark Comparison Report
 
-      - name: Upload benchmark results
+          Comparing PR benchmarks against the main branch baseline.
+
+          EOF
+
+          # Parse and compare results using Python
+          python3 << 'PYTHON_SCRIPT'
+          import json
+          import sys
+          from pathlib import Path
+          from collections import defaultdict
+
+          def parse_criterion(base_dir):
+              results = {}
+              criterion_dir = Path(base_dir)
+              if not criterion_dir.exists():
+                  return results
+
+              for estimates_file in criterion_dir.rglob("estimates.json"):
+                  try:
+                      with open(estimates_file, 'r') as f:
+                          data = json.load(f)
+
+                      # Get benchmark name from path structure
+                      rel_path = estimates_file.relative_to(criterion_dir)
+                      bench_name = str(rel_path.parent.parent)
+
+                      mean_ns = data.get("mean", {}).get("point_estimate", 0)
+                      results[bench_name] = mean_ns
+                  except Exception as e:
+                      print(f"Warning: {e}", file=sys.stderr)
+
+              return results
+
+          def format_time(ns):
+              if ns < 1_000:
+                  return f"{ns:.2f} ns"
+              elif ns < 1_000_000:
+                  return f"{ns / 1_000:.2f} µs"
+              elif ns < 1_000_000_000:
+                  return f"{ns / 1_000_000:.2f} ms"
+              else:
+                  return f"{ns / 1_000_000_000:.2f} s"
+
+          # Parse both baseline and current
+          baseline = parse_criterion("../target/criterion-baseline")
+          current = parse_criterion("../target/criterion")
+
+          if not baseline or not current:
+              print("Unable to compare - missing results", file=sys.stderr)
+              sys.exit(0)
+
+          # Compare common benchmarks
+          common = set(baseline.keys()) & set(current.keys())
+
+          improvements = []
+          regressions = []
+          neutral = []
+
+          for bench in sorted(common):
+              base_val = baseline[bench]
+              curr_val = current[bench]
+
+              if base_val == 0:
+                  continue
+
+              change_pct = ((curr_val - base_val) / base_val) * 100
+
+              item = {
+                  'name': bench,
+                  'baseline': base_val,
+                  'current': curr_val,
+                  'change_pct': change_pct
+              }
+
+              if abs(change_pct) < 5.0:
+                  neutral.append(item)
+              elif change_pct < 0:
+                  improvements.append(item)
+              else:
+                  regressions.append(item)
+
+          # Write comparison report
+          with open('comparison_report.md', 'a') as f:
+              f.write(f"### Summary\n\n")
+              f.write(f"- Total benchmarks compared: **{len(common)}**\n")
+              f.write(f"- Improvements: **{len(improvements)}** ✅\n")
+              f.write(f"- Regressions: **{len(regressions)}** ⚠️\n")
+              f.write(f"- Neutral (< 5% change): **{len(neutral)}**\n\n")
+
+              if regressions:
+                  # Sort by absolute change percentage
+                  regressions.sort(key=lambda x: abs(x['change_pct']), reverse=True)
+
+                  f.write("### Performance Regressions ⚠️\n\n")
+                  f.write("| Benchmark | Baseline | Current | Change |\n")
+                  f.write("|-----------|----------|---------|--------|\n")
+
+                  for item in regressions[:10]:  # Top 10
+                      f.write(f"| {item['name']} | {format_time(item['baseline'])} | ")
+                      f.write(f"{format_time(item['current'])} | ")
+                      f.write(f"+{item['change_pct']:.2f}% ⚠️ |\n")
+
+                  f.write("\n")
+
+              if improvements:
+                  improvements.sort(key=lambda x: abs(x['change_pct']), reverse=True)
+
+                  f.write("### Performance Improvements ✅\n\n")
+                  f.write("| Benchmark | Baseline | Current | Change |\n")
+                  f.write("|-----------|----------|---------|--------|\n")
+
+                  for item in improvements[:10]:  # Top 10
+                      f.write(f"| {item['name']} | {format_time(item['baseline'])} | ")
+                      f.write(f"{format_time(item['current'])} | ")
+                      f.write(f"{item['change_pct']:.2f}% ✅ |\n")
+
+                  f.write("\n")
+
+              if not regressions and not improvements:
+                  f.write("No significant performance changes detected (all changes < 5%).\n\n")
+
+          PYTHON_SCRIPT
+
+      - name: Upload current benchmark results
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-results-${{ github.run_number }}
+          name: benchmark-results-main
           path: |
             target/criterion/
-            bench-output.txt
+          retention-days: 90
+
+      - name: Upload PR benchmark results
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-pr-${{ github.event.pull_request.number }}
+          path: |
+            target/criterion/
+            benches/BENCHMARKS.md
+            benches/comparison_report.md
+          retention-days: 30
 
       - name: Comment benchmark results on PR
         if: github.event_name == 'pull_request'
@@ -112,19 +249,25 @@ jobs:
           script: |
             const fs = require('fs');
 
-            let comment = '## Benchmark Results\n\n';
+            let comment = '## 📊 Benchmark Results\n\n';
 
-            if (fs.existsSync('benchmark-comment.md')) {
-              comment += fs.readFileSync('benchmark-comment.md', 'utf8');
+            // Add comparison report if available
+            const comparisonPath = 'benches/comparison_report.md';
+            if (fs.existsSync(comparisonPath)) {
+              const comparison = fs.readFileSync(comparisonPath, 'utf8');
+              comment += comparison + '\n';
             } else {
-              comment += 'Benchmark results are available in the artifacts.\n';
+              comment += '⚠️ No baseline benchmarks available for comparison.\n';
+              comment += 'This is expected for the first PR or if baseline artifacts have expired.\n\n';
             }
 
-            comment += '\n---\n';
-            comment += `**Run ID:** ${context.runNumber}\n`;
-            comment += `**Commit:** ${context.sha.substring(0, 7)}\n`;
+            // Add link to full report
+            comment += '---\n\n';
+            comment += '**Full benchmark report**: Available in the workflow artifacts\n';
+            comment += `**Commit**: ${context.sha.substring(0, 7)}\n`;
+            comment += `**Run**: [#${context.runNumber}](${context.payload.repository.html_url}/actions/runs/${context.runId})\n`;
 
-            // Find existing benchmark comment
+            // Find and update existing comment or create new one
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -133,7 +276,7 @@ jobs:
 
             const botComment = comments.find(comment =>
               comment.user.type === 'Bot' &&
-              comment.body.includes('Benchmark Results')
+              comment.body.includes('📊 Benchmark Results')
             );
 
             if (botComment) {
@@ -143,6 +286,7 @@ jobs:
                 comment_id: botComment.id,
                 body: comment
               });
+              console.log('Updated existing benchmark comment');
             } else {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
@@ -150,7 +294,16 @@ jobs:
                 issue_number: context.issue.number,
                 body: comment
               });
+              console.log('Created new benchmark comment');
             }
+
+      - name: Upload benchmark report to main branch
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-report
+          path: benches/BENCHMARKS.md
+          retention-days: 90
 
   system-benchmarks:
     name: System Benchmarks
