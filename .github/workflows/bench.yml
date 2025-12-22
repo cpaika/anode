@@ -224,7 +224,7 @@ jobs:
 
       - name: Upload current benchmark results
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: benchmark-results-main
           path: |
@@ -233,7 +233,7 @@ jobs:
 
       - name: Upload PR benchmark results
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: benchmark-results-pr-${{ github.event.pull_request.number }}
           path: |
@@ -299,7 +299,7 @@ jobs:
 
       - name: Upload benchmark report to main branch
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: benchmark-report
           path: benches/BENCHMARKS.md
@@ -347,7 +347,7 @@ jobs:
             --output benchmark-results.json
 
       - name: Upload system benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: system-benchmark-results-${{ github.run_number }}
           path: benches/benchmark-results.json

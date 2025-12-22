@@ -106,7 +106,7 @@ jobs:
 
       - name: Upload chaos test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: chaos-test-results-${{ github.run_number }}
           path: |
@@ -156,7 +156,7 @@ jobs:
           fi
 
       - name: Upload report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: chaos-test-report-${{ github.run_number }}
           path: chaos-report.md
