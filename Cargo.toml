@@ -86,7 +86,7 @@ hyper-util = "0.1"
 http-body-util = "0.1"
 
 # Configuration
-config = "0.14"
+config = "0.15"
 toml = "0.8"
 
 # Async utilities
