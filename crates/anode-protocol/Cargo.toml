@@ -16,4 +16,4 @@ tokio-stream = "0.1"
 futures = "0.3"
 
 [build-dependencies]
-tonic-build = "0.12"
+tonic-build = "0.14"
