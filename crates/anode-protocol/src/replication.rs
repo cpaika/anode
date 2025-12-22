@@ -1,4 +1,17 @@
-use crate::error::{ProtocolError, ProtocolResult};
+//! Chunk replication protocol implementation.
+//!
+//! This module implements the gRPC services for replicating chunk data between
+//! nodes in the cluster. It provides streaming APIs for efficient transfer of
+//! large chunks and verification of chunk integrity.
+//!
+//! # Replication Flow
+//!
+//! 1. **Replicate**: Leader streams chunks to followers
+//! 2. **Verify**: Nodes verify chunk existence and integrity
+//! 3. **Fetch**: Nodes can fetch missing chunks from peers
+//! 4. **List**: Nodes can list available chunks for synchronization
+
+use crate::error::ProtocolResult;
 use crate::proto;
 use futures::{Stream, StreamExt};
 use std::pin::Pin;
@@ -7,19 +20,21 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 
-/// Type alias for streaming responses
+/// Type alias for streaming responses.
 type ResponseStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send>>;
 
-/// Replication service server implementation
+/// Replication service server implementation.
 ///
 /// This service handles chunk replication between nodes, including streaming
-/// chunk data, verifying chunk existence, and listing chunks.
+/// chunk data, verifying chunk existence, and listing chunks. It requires
+/// both a [`BlobStore`] for chunk data and a [`ChunkManager`] for metadata.
 pub struct ReplicationServiceImpl<B, C> {
     blob_store: Arc<B>,
     chunk_manager: Arc<C>,
 }
 
 impl<B, C> ReplicationServiceImpl<B, C> {
+    /// Creates a new ReplicationServiceImpl with the given blob store and chunk manager.
     pub fn new(blob_store: Arc<B>, chunk_manager: Arc<C>) -> Self {
         Self {
             blob_store,
@@ -28,26 +43,44 @@ impl<B, C> ReplicationServiceImpl<B, C> {
     }
 }
 
-/// Trait that must be implemented by the blob store
+/// Trait that must be implemented by the blob store.
+///
+/// The blob store is responsible for the physical storage and retrieval
+/// of chunk data on disk or other storage backends.
 #[tonic::async_trait]
 pub trait BlobStore: Send + Sync + 'static {
-    /// Store chunk data received from replication
+    /// Stores chunk data received from replication.
+    ///
+    /// The chunk ID is a 32-byte SHA-256 hash that uniquely identifies
+    /// the chunk. Implementations should verify the hash matches the data.
     async fn store_chunk(&self, chunk_id: &[u8; 32], data: Vec<u8>) -> ProtocolResult<()>;
 
-    /// Fetch chunk data for replication
+    /// Fetches chunk data for replication.
+    ///
+    /// Returns the raw bytes of the chunk. Returns an error if the chunk
+    /// does not exist.
     async fn fetch_chunk(&self, chunk_id: &[u8; 32]) -> ProtocolResult<Vec<u8>>;
 }
 
-/// Trait that must be implemented by the chunk manager
+/// Trait that must be implemented by the chunk manager.
+///
+/// The chunk manager maintains metadata about chunks, including their
+/// existence, validity, and reference counts.
 #[tonic::async_trait]
 pub trait ChunkManager: Send + Sync + 'static {
-    /// Verify that a chunk exists and is valid
+    /// Verifies that a chunk exists and is valid.
+    ///
+    /// Returns metadata about the chunk including whether it exists,
+    /// is valid (checksum matches), and its size.
     async fn verify_chunk(
         &self,
         chunk_id: &[u8; 32],
     ) -> ProtocolResult<proto::replication::VerifyChunkResponse>;
 
-    /// List chunks on this node
+    /// Lists chunks on this node.
+    ///
+    /// Returns a paginated list of chunks. Use `start_after` to continue
+    /// from a previous query, and `limit` to control page size.
     async fn list_chunks(
         &self,
         start_after: Option<Vec<u8>>,
@@ -119,7 +152,10 @@ impl<B: BlobStore, C: ChunkManager>
                                 continue;
                             };
 
-                            match blob_store.store_chunk(&chunk_hash, current_data.clone()).await {
+                            match blob_store
+                                .store_chunk(&chunk_hash, current_data.clone())
+                                .await
+                            {
                                 Ok(_) => {
                                     tracing::info!(
                                         chunk_id = %hex::encode(&chunk_id),
@@ -137,7 +173,7 @@ impl<B: BlobStore, C: ChunkManager>
                                         tracing::error!("Failed to send response");
                                         break;
                                     }
-                                }
+                                },
                                 Err(e) => {
                                     tracing::error!(
                                         chunk_id = %hex::encode(&chunk_id),
@@ -155,17 +191,17 @@ impl<B: BlobStore, C: ChunkManager>
                                         tracing::error!("Failed to send error response");
                                         break;
                                     }
-                                }
+                                },
                             }
 
                             current_data.clear();
                         }
-                    }
+                    },
                     Err(e) => {
                         tracing::error!(error = %e, "Stream error");
                         let _ = tx.send(Err(e)).await;
                         break;
-                    }
+                    },
                 }
             }
 
@@ -261,14 +297,14 @@ impl<B: BlobStore, C: ChunkManager>
             match blob_store.fetch_chunk(&chunk_hash).await {
                 Ok(data) => {
                     tracing::info!(
-                        chunk_id = %hex::encode(&chunk_hash),
+                        chunk_id = %hex::encode(chunk_hash),
                         size = data.len(),
                         "Fetched chunk data"
                     );
 
                     // Stream data in 64KB chunks
                     const CHUNK_SIZE: usize = 64 * 1024;
-                    let total_chunks = (data.len() + CHUNK_SIZE - 1) / CHUNK_SIZE;
+                    let total_chunks = data.len().div_ceil(CHUNK_SIZE);
 
                     for (i, chunk) in data.chunks(CHUNK_SIZE).enumerate() {
                         let is_last = i == total_chunks - 1;
@@ -283,15 +319,15 @@ impl<B: BlobStore, C: ChunkManager>
                             break;
                         }
                     }
-                }
+                },
                 Err(e) => {
                     tracing::error!(
-                        chunk_id = %hex::encode(&chunk_hash),
+                        chunk_id = %hex::encode(chunk_hash),
                         error = %e,
                         "Failed to fetch chunk"
                     );
                     let _ = tx.send(Err(Status::from(e))).await;
-                }
+                },
             }
 
             tracing::info!("FetchChunk stream completed");
@@ -315,7 +351,7 @@ impl<B: BlobStore, C: ChunkManager>
         let req = request.into_inner();
 
         tracing::debug!(
-            start_after = req.start_after.as_ref().map(|s| hex::encode(s)),
+            start_after = req.start_after.as_ref().map(hex::encode),
             limit = req.limit,
             "Received ListChunks request"
         );
@@ -325,10 +361,7 @@ impl<B: BlobStore, C: ChunkManager>
         let (tx, rx) = mpsc::channel(128);
 
         tokio::spawn(async move {
-            match chunk_manager
-                .list_chunks(req.start_after, req.limit)
-                .await
-            {
+            match chunk_manager.list_chunks(req.start_after, req.limit).await {
                 Ok(chunks) => {
                     tracing::info!(count = chunks.len(), "Listed chunks");
 
@@ -337,11 +370,11 @@ impl<B: BlobStore, C: ChunkManager>
                     if tx.send(Ok(response)).await.is_err() {
                         tracing::error!("Failed to send chunk list");
                     }
-                }
+                },
                 Err(e) => {
                     tracing::error!(error = %e, "Failed to list chunks");
                     let _ = tx.send(Err(Status::from(e))).await;
-                }
+                },
             }
 
             tracing::debug!("ListChunks stream completed");
@@ -357,20 +390,22 @@ impl<B: BlobStore, C: ChunkManager>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::common;
     use crate::proto::replication::replication_service_server::ReplicationService;
     use crate::proto::replication::*;
-    use crate::proto::common;
-    use std::collections::HashMap;
+    use crate::ProtocolError;
+    use std::collections::BTreeMap;
     use tokio::sync::Mutex;
 
     struct MockBlobStore {
-        chunks: Arc<Mutex<HashMap<[u8; 32], Vec<u8>>>>,
+        chunks: Arc<Mutex<BTreeMap<[u8; 32], Vec<u8>>>>,
     }
 
     impl MockBlobStore {
+        #[allow(dead_code)]
         fn new() -> Self {
             Self {
-                chunks: Arc::new(Mutex::new(HashMap::new())),
+                chunks: Arc::new(Mutex::new(BTreeMap::new())),
             }
         }
     }
@@ -393,21 +428,18 @@ mod tests {
     }
 
     struct MockChunkManager {
-        chunks: Arc<Mutex<HashMap<[u8; 32], Vec<u8>>>>,
+        chunks: Arc<Mutex<BTreeMap<[u8; 32], Vec<u8>>>>,
     }
 
     impl MockChunkManager {
-        fn new(chunks: Arc<Mutex<HashMap<[u8; 32], Vec<u8>>>>) -> Self {
+        fn new(chunks: Arc<Mutex<BTreeMap<[u8; 32], Vec<u8>>>>) -> Self {
             Self { chunks }
         }
     }
 
     #[tonic::async_trait]
     impl ChunkManager for MockChunkManager {
-        async fn verify_chunk(
-            &self,
-            chunk_id: &[u8; 32],
-        ) -> ProtocolResult<VerifyChunkResponse> {
+        async fn verify_chunk(&self, chunk_id: &[u8; 32]) -> ProtocolResult<VerifyChunkResponse> {
             let chunks = self.chunks.lock().await;
             let exists = chunks.contains_key(chunk_id);
             let size = chunks.get(chunk_id).map(|d| d.len() as u64).unwrap_or(0);
@@ -429,9 +461,7 @@ mod tests {
                 .iter()
                 .take(limit as usize)
                 .map(|(id, data)| ChunkInfo {
-                    chunk_id: Some(common::ChunkId {
-                        hash: id.to_vec(),
-                    }),
+                    chunk_id: Some(common::ChunkId { hash: id.to_vec() }),
                     size: data.len() as u64,
                     ref_count: 1,
                 })
@@ -443,7 +473,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_verify_chunk_exists() {
-        let chunks = Arc::new(Mutex::new(HashMap::new()));
+        let chunks = Arc::new(Mutex::new(BTreeMap::new()));
         let chunk_id = [0xab; 32];
         chunks.lock().await.insert(chunk_id, vec![1, 2, 3]);
 
@@ -469,7 +499,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_verify_chunk_not_exists() {
-        let chunks = Arc::new(Mutex::new(HashMap::new()));
+        let chunks = Arc::new(Mutex::new(BTreeMap::new()));
 
         let blob_store = Arc::new(MockBlobStore {
             chunks: Arc::clone(&chunks),
@@ -494,7 +524,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_chunk_success() {
-        let chunks = Arc::new(Mutex::new(HashMap::new()));
+        let chunks: Arc<Mutex<BTreeMap<[u8; 32], Vec<u8>>>> = Arc::new(Mutex::new(BTreeMap::new()));
         let chunk_id = [0xab; 32];
         let data = vec![1, 2, 3, 4, 5];
         chunks.lock().await.insert(chunk_id, data.clone());
@@ -527,7 +557,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_chunks() {
-        let chunks = Arc::new(Mutex::new(HashMap::new()));
+        let chunks: Arc<Mutex<BTreeMap<[u8; 32], Vec<u8>>>> = Arc::new(Mutex::new(BTreeMap::new()));
         chunks.lock().await.insert([0x01; 32], vec![1, 2, 3]);
         chunks.lock().await.insert([0x02; 32], vec![4, 5, 6]);
 

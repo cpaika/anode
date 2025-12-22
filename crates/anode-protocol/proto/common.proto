@@ -32,6 +32,8 @@ message ObjectManifest {
   int64 modified_at = 6;
   map<string, string> metadata = 7;
   optional ParquetMetadata parquet_meta = 8;
+  string version_id = 9; // Version ID for object versioning (null for non-versioned)
+  bool is_delete_marker = 10; // Whether this manifest represents a delete marker
 }
 
 // Parquet-specific metadata cache

@@ -1,7 +1,17 @@
+//! Error types for the storage engine.
+//!
+//! This module defines all error types that can occur during storage operations,
+//! including IO errors, database errors, corruption detection, and more.
+
 use thiserror::Error;
 
+/// Result type alias for storage operations.
 pub type Result<T> = std::result::Result<T, StorageError>;
 
+/// Error types for storage operations.
+///
+/// This enum encompasses all possible errors that can occur in the storage engine,
+/// from low-level IO errors to high-level object operations.
 #[derive(Error, Debug)]
 pub enum StorageError {
     #[error("IO error: {0}")]
@@ -51,6 +61,14 @@ pub enum StorageError {
 
     #[error("Reference count error: {0}")]
     RefCountError(String),
+
+    #[error("Quota exceeded for bucket {bucket}: {current_usage}/{quota} bytes used, cannot add {requested} bytes")]
+    QuotaExceeded {
+        bucket: String,
+        quota: u64,
+        current_usage: u64,
+        requested: u64,
+    },
 
     #[error("Internal error: {0}")]
     Internal(String),

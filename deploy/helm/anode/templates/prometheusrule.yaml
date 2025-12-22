@@ -57,4 +57,70 @@ spec:
       annotations:
         summary: "Anode cluster does not have quorum"
         description: "Less than half of the Anode nodes are available. Cluster may be unavailable."
+
+    # Performance and latency alerts
+    - alert: AnodeHighRequestLatency
+      expr: histogram_quantile(0.95, rate(anode_request_duration_seconds_bucket{job="{{ include "anode.fullname" . }}"}[5m])) > 1.0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High request latency on {{ "{{" }} $labels.pod {{ "}}" }}"
+        description: "95th percentile request latency is {{ "{{" }} $value {{ "}}" }}s on {{ "{{" }} $labels.pod {{ "}}" }}."
+
+    - alert: AnodeHighRequestLatencyCritical
+      expr: histogram_quantile(0.95, rate(anode_request_duration_seconds_bucket{job="{{ include "anode.fullname" . }}"}[5m])) > 5.0
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Critical request latency on {{ "{{" }} $labels.pod {{ "}}" }}"
+        description: "95th percentile request latency is {{ "{{" }} $value {{ "}}" }}s on {{ "{{" }} $labels.pod {{ "}}" }}."
+
+    # Error rate alerts
+    - alert: AnodeHighErrorRate
+      expr: rate(anode_operation_errors_total{job="{{ include "anode.fullname" . }}"}[5m]) > 0.05
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High error rate on {{ "{{" }} $labels.pod {{ "}}" }}"
+        description: "Error rate is {{ "{{" }} $value {{ "}}" }} per second for {{ "{{" }} $labels.operation {{ "}}" }} ({{ "{{" }} $labels.error_type {{ "}}" }})."
+
+    # Raft consensus alerts
+    - alert: AnodeNoRaftLeader
+      expr: sum(anode_raft_is_leader{job="{{ include "anode.fullname" . }}"}) == 0
+      for: 30s
+      labels:
+        severity: critical
+      annotations:
+        summary: "Anode cluster has no Raft leader"
+        description: "The Anode cluster has no elected Raft leader for more than 30 seconds."
+
+    - alert: AnodeMultipleRaftLeaders
+      expr: sum(anode_raft_is_leader{job="{{ include "anode.fullname" . }}"}) > 1
+      for: 10s
+      labels:
+        severity: critical
+      annotations:
+        summary: "Anode cluster has multiple Raft leaders"
+        description: "The Anode cluster has {{ "{{" }} $value {{ "}}" }} leaders (split brain detected)."
+
+    - alert: AnodeRaftLeaderChangesFrequent
+      expr: rate(anode_raft_leader_changes_total{job="{{ include "anode.fullname" . }}"}[10m]) > 0.5
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Frequent Raft leader changes"
+        description: "Raft leader is changing {{ "{{" }} $value {{ "}}" }} times per second, indicating instability."
+
+    - alert: AnodeRaftProposalFailureRateHigh
+      expr: rate(anode_raft_proposal_failures_total{job="{{ include "anode.fullname" . }}"}[5m]) > 0.1
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High Raft proposal failure rate on {{ "{{" }} $labels.pod {{ "}}" }}"
+        description: "Raft proposal failure rate is {{ "{{" }} $value {{ "}}" }} per second on {{ "{{" }} $labels.pod {{ "}}" }}."
 {{- end }}

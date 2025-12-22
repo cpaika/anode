@@ -48,7 +48,7 @@ impl NetworkChaos {
     }
 
     /// Create with default interface
-    pub fn default() -> Self {
+    pub fn with_default_interface() -> Self {
         Self::new("eth0".to_string())
     }
 
@@ -65,17 +65,25 @@ impl NetworkChaos {
 
         // Use iptables to block traffic to/from the node's port
         self.run_iptables_command(&[
-            "-A", "INPUT",
-            "-p", "tcp",
-            "--dport", &target_port.to_string(),
-            "-j", "DROP",
+            "-A",
+            "INPUT",
+            "-p",
+            "tcp",
+            "--dport",
+            &target_port.to_string(),
+            "-j",
+            "DROP",
         ])?;
 
         self.run_iptables_command(&[
-            "-A", "OUTPUT",
-            "-p", "tcp",
-            "--sport", &target_port.to_string(),
-            "-j", "DROP",
+            "-A",
+            "OUTPUT",
+            "-p",
+            "tcp",
+            "--sport",
+            &target_port.to_string(),
+            "-j",
+            "DROP",
         ])?;
 
         Ok(())
@@ -83,22 +91,35 @@ impl NetworkChaos {
 
     /// Remove partition for a node
     pub async fn heal_partition(&self, node: NodeId, target_port: u16) -> Result<()> {
-        info!("Healing partition for node {} on port {}", node, target_port);
+        info!(
+            "Healing partition for node {} on port {}",
+            node, target_port
+        );
 
         // Remove iptables rules
         self.run_iptables_command(&[
-            "-D", "INPUT",
-            "-p", "tcp",
-            "--dport", &target_port.to_string(),
-            "-j", "DROP",
-        ]).ok(); // Ignore errors if rule doesn't exist
+            "-D",
+            "INPUT",
+            "-p",
+            "tcp",
+            "--dport",
+            &target_port.to_string(),
+            "-j",
+            "DROP",
+        ])
+        .ok(); // Ignore errors if rule doesn't exist
 
         self.run_iptables_command(&[
-            "-D", "OUTPUT",
-            "-p", "tcp",
-            "--sport", &target_port.to_string(),
-            "-j", "DROP",
-        ]).ok();
+            "-D",
+            "OUTPUT",
+            "-p",
+            "tcp",
+            "--sport",
+            &target_port.to_string(),
+            "-j",
+            "DROP",
+        ])
+        .ok();
 
         Ok(())
     }
@@ -112,19 +133,20 @@ impl NetworkChaos {
             ));
         }
 
-        let mut args = vec![
-            "qdisc", "add", "dev", &self.interface, "root", "netem",
-        ];
+        let mut args = vec!["qdisc", "add", "dev", &self.interface, "root", "netem"];
 
-        let delay_str;
-        let jitter_str;
-        let loss_str;
-        let rate_str;
-        let duplicate_str;
-        let corrupt_str;
+        let delay_str: String;
+        let jitter_str: String;
+        let loss_str: String;
+        let _rate_str: String;
+        let duplicate_str: String;
+        let corrupt_str: String;
 
         match condition {
-            NetworkCondition::Latency { delay_ms, jitter_ms } => {
+            NetworkCondition::Latency {
+                delay_ms,
+                jitter_ms,
+            } => {
                 delay_str = format!("{}ms", delay_ms);
                 args.extend(&["delay", &delay_str]);
 
@@ -132,27 +154,29 @@ impl NetworkChaos {
                     jitter_str = format!("{}ms", jitter_ms);
                     args.push(&jitter_str);
                 }
-            }
+            },
             NetworkCondition::PacketLoss { percent } => {
                 loss_str = format!("{}%", percent);
                 args.extend(&["loss", &loss_str]);
-            }
-            NetworkCondition::BandwidthLimit { bytes_per_sec } => {
+            },
+            NetworkCondition::BandwidthLimit { bytes_per_sec: _ } => {
                 // For bandwidth limiting, we need to use tbf (token bucket filter)
                 // This is more complex and would need a separate implementation
-                warn!("Bandwidth limiting requires tbf qdisc - not implemented in this basic version");
+                warn!(
+                    "Bandwidth limiting requires tbf qdisc - not implemented in this basic version"
+                );
                 return Err(ChaosError::NetworkChaos(
                     "Bandwidth limiting not fully implemented".to_string(),
                 ));
-            }
+            },
             NetworkCondition::PacketDuplication { percent } => {
                 duplicate_str = format!("{}%", percent);
                 args.extend(&["duplicate", &duplicate_str]);
-            }
+            },
             NetworkCondition::PacketCorruption { percent } => {
                 corrupt_str = format!("{}%", percent);
                 args.extend(&["corrupt", &corrupt_str]);
-            }
+            },
         }
 
         self.run_tc_command(&args)?;
@@ -168,9 +192,8 @@ impl NetworkChaos {
 
         info!("Clearing all network conditions on {}", self.interface);
 
-        self.run_tc_command(&[
-            "qdisc", "del", "dev", &self.interface, "root",
-        ]).ok(); // Ignore errors if no qdisc exists
+        self.run_tc_command(&["qdisc", "del", "dev", &self.interface, "root"])
+            .ok(); // Ignore errors if no qdisc exists
 
         Ok(())
     }
@@ -180,22 +203,26 @@ impl NetworkChaos {
         self.add_condition(NetworkCondition::Latency {
             delay_ms: delay.as_millis() as u64,
             jitter_ms: jitter.as_millis() as u64,
-        }).await
+        })
+        .await
     }
 
     /// Add packet loss
     pub async fn add_packet_loss(&self, percent: f64) -> Result<()> {
-        self.add_condition(NetworkCondition::PacketLoss { percent }).await
+        self.add_condition(NetworkCondition::PacketLoss { percent })
+            .await
     }
 
     /// Add packet duplication
     pub async fn add_packet_duplication(&self, percent: f64) -> Result<()> {
-        self.add_condition(NetworkCondition::PacketDuplication { percent }).await
+        self.add_condition(NetworkCondition::PacketDuplication { percent })
+            .await
     }
 
     /// Add packet corruption
     pub async fn add_packet_corruption(&self, percent: f64) -> Result<()> {
-        self.add_condition(NetworkCondition::PacketCorruption { percent }).await
+        self.add_condition(NetworkCondition::PacketCorruption { percent })
+            .await
     }
 
     /// Heal all network issues
@@ -205,10 +232,7 @@ impl NetworkChaos {
 
     /// Check if tc is available on the system
     fn check_tc_available() -> bool {
-        Command::new("tc")
-            .arg("-Version")
-            .output()
-            .is_ok()
+        Command::new("tc").arg("-Version").output().is_ok()
     }
 
     /// Run a tc command
@@ -256,9 +280,7 @@ impl Drop for NetworkChaos {
     fn drop(&mut self) {
         // Clean up network conditions on drop
         if self.tc_available {
-            let _ = self.run_tc_command(&[
-                "qdisc", "del", "dev", &self.interface, "root",
-            ]);
+            let _ = self.run_tc_command(&["qdisc", "del", "dev", &self.interface, "root"]);
         }
     }
 }

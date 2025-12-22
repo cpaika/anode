@@ -4,8 +4,8 @@ use bytes::Bytes;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a client configuration
-    let config = ClientConfig::new("http://localhost:8080")
-        .with_credentials("minioadmin", "minioadmin");
+    let config =
+        ClientConfig::new("http://localhost:8080").with_credentials("minioadmin", "minioadmin");
 
     let client = AnodeClient::new(config)?;
 
@@ -35,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             for obj in result.objects {
                 println!("  - {} ({} bytes)", obj.key, obj.size);
             }
-        }
+        },
         Err(e) => println!("  ✗ Failed to list objects: {}", e),
     }
 
@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(result) => {
             let content = String::from_utf8_lossy(&result.body);
             println!("  ✓ Downloaded: {}", content);
-        }
+        },
         Err(e) => println!("  ✗ Failed to download object: {}", e),
     }
 
@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Size: {} bytes", metadata.size);
             println!("  ETag: {}", metadata.etag);
             println!("  Last Modified: {}", metadata.last_modified);
-        }
+        },
         Err(e) => println!("  ✗ Failed to get metadata: {}", e),
     }
 

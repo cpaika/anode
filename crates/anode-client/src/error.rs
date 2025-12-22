@@ -1,3 +1,28 @@
+/// Error types for the Anode client.
+///
+/// All operations in the client can fail with a [`ClientError`]. This enum covers
+/// network errors, S3-specific errors, authentication failures, and validation errors.
+///
+/// # Example
+///
+/// ```no_run
+/// use anode_client::{ClientConfig, AnodeClient, ClientError};
+///
+/// # #[tokio::main]
+/// # async fn main() {
+/// let config = ClientConfig::new("http://localhost:8080")
+///     .with_credentials("key", "secret");
+/// let client = AnodeClient::new(config).unwrap();
+///
+/// match client.get_object("my-bucket", "missing.txt").await {
+///     Ok(result) => println!("Got object: {} bytes", result.body.len()),
+///     Err(ClientError::ObjectNotFound { bucket, key }) => {
+///         println!("Object {}/{} not found", bucket, key);
+///     }
+///     Err(e) => println!("Other error: {}", e),
+/// }
+/// # }
+/// ```
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
     #[error("Network error: {0}")]
@@ -67,9 +92,30 @@ pub enum ClientError {
     InvalidParameter { parameter: String, value: String },
 }
 
+/// A type alias for `Result<T, ClientError>`.
+///
+/// This is used throughout the client API for convenience.
 pub type Result<T> = std::result::Result<T, ClientError>;
 
 impl ClientError {
+    /// Returns `true` if this error represents a "not found" condition.
+    ///
+    /// This includes both bucket not found and object not found errors.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use anode_client::ClientError;
+    ///
+    /// let err = ClientError::BucketNotFound("my-bucket".to_string());
+    /// assert!(err.is_not_found());
+    ///
+    /// let err = ClientError::ObjectNotFound {
+    ///     bucket: "my-bucket".to_string(),
+    ///     key: "my-key".to_string(),
+    /// };
+    /// assert!(err.is_not_found());
+    /// ```
     pub fn is_not_found(&self) -> bool {
         matches!(
             self,
@@ -77,6 +123,22 @@ impl ClientError {
         )
     }
 
+    /// Returns `true` if this error is retriable.
+    ///
+    /// Retriable errors include network errors, timeouts, and server errors (5xx).
+    /// The client automatically retries these errors up to `max_retries` times.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use anode_client::ClientError;
+    ///
+    /// let err = ClientError::Timeout(std::time::Duration::from_secs(30));
+    /// assert!(err.is_retriable());
+    ///
+    /// let err = ClientError::BucketNotFound("my-bucket".to_string());
+    /// assert!(!err.is_retriable());
+    /// ```
     pub fn is_retriable(&self) -> bool {
         match self {
             ClientError::Network(_) | ClientError::Timeout(_) => true,
@@ -85,6 +147,14 @@ impl ClientError {
         }
     }
 
+    /// Creates a `ClientError` from an HTTP status code and response body.
+    ///
+    /// This is used internally to convert HTTP errors into typed client errors.
+    ///
+    /// # Arguments
+    ///
+    /// * `status` - HTTP status code
+    /// * `body` - Response body (may contain XML error details)
     pub fn from_status_code(status: http::StatusCode, body: String) -> Self {
         match status {
             http::StatusCode::NOT_FOUND => {
@@ -96,7 +166,7 @@ impl ClientError {
                         message: body,
                     }
                 }
-            }
+            },
             http::StatusCode::CONFLICT => {
                 if body.contains("BucketAlreadyExists") {
                     ClientError::BucketAlreadyExists(extract_bucket_name(&body))
@@ -106,7 +176,7 @@ impl ClientError {
                         message: body,
                     }
                 }
-            }
+            },
             http::StatusCode::FORBIDDEN => ClientError::AuthenticationFailed(body),
             _ => ClientError::InvalidStatus(status),
         }

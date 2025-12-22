@@ -3,7 +3,7 @@
 //! Tests cluster resilience during rolling updates/restarts.
 
 use super::{ChaosScenario, ScenarioConfig, ScenarioResult};
-use crate::{Result, ChaosError, verification::DataVerifier};
+use crate::{verification::DataVerifier, ChaosError, Result};
 use anode_test_harness::TestCluster;
 use async_trait::async_trait;
 use std::time::Duration;
@@ -23,24 +23,33 @@ impl ChaosScenario for RollingRestartScenario {
         "Performs a rolling restart of all nodes while maintaining availability"
     }
 
-    async fn run(&self, cluster: &mut TestCluster, config: &ScenarioConfig) -> Result<ScenarioResult> {
+    async fn run(
+        &self,
+        cluster: &mut TestCluster,
+        config: &ScenarioConfig,
+    ) -> Result<ScenarioResult> {
         let start_time = Instant::now();
-        let mut operations = 0;
-        let mut failures = 0;
 
-        info!("Starting rolling restart scenario with {} nodes", config.num_nodes);
+        info!(
+            "Starting rolling restart scenario with {} nodes",
+            config.num_nodes
+        );
 
         let mut verifier = DataVerifier::new(cluster.get_s3_endpoint());
+        let mut ops = 0;
+        let mut fails = 0;
 
         // Write initial data
         for i in 0..10 {
-            verifier.write_and_track(
-                "test-bucket",
-                &format!("pre-restart-{}", i),
-                format!("data-{}", i).into_bytes(),
-            ).await
+            verifier
+                .write_and_track(
+                    "test-bucket",
+                    &format!("pre-restart-{}", i),
+                    format!("data-{}", i).into_bytes(),
+                )
+                .await
                 .map_err(|e| ChaosError::VerificationFailed(e.to_string()))?;
-            operations += 1;
+            ops += 1;
         }
 
         // Perform rolling restart
@@ -50,25 +59,30 @@ impl ChaosScenario for RollingRestartScenario {
             info!("Restarting node {} of {}", i + 1, config.num_nodes);
 
             // Restart the node
-            cluster.restart_node(i).await
+            cluster
+                .restart_node(i)
+                .await
                 .map_err(|e| ChaosError::ScenarioFailed(e.to_string()))?;
 
             // Wait for node to come back up
             sleep(Duration::from_secs(5)).await;
 
             // Verify cluster is still operational during restart
-            match verifier.write_and_track(
-                "test-bucket",
-                &format!("during-restart-{}", i),
-                format!("data-during-{}", i).into_bytes(),
-            ).await {
+            match verifier
+                .write_and_track(
+                    "test-bucket",
+                    &format!("during-restart-{}", i),
+                    format!("data-during-{}", i).into_bytes(),
+                )
+                .await
+            {
                 Ok(_) => {
-                    operations += 1;
-                }
+                    ops += 1;
+                },
                 Err(e) => {
-                    failures += 1;
+                    fails += 1;
                     info!("Write failed during restart of node {}: {}", i, e);
-                }
+                },
             }
 
             // Wait before restarting next node
@@ -77,11 +91,16 @@ impl ChaosScenario for RollingRestartScenario {
             }
         }
 
+        let operations = ops;
+        let failures = fails;
+
         // Verify all nodes are back up
         sleep(Duration::from_secs(10)).await;
 
         // Verify all data is intact
-        let integrity_verified = verifier.verify_all().await
+        let integrity_verified = verifier
+            .verify_all()
+            .await
             .map_err(|e| ChaosError::VerificationFailed(e.to_string()))?;
 
         Ok(ScenarioResult {
@@ -96,7 +115,10 @@ impl ChaosScenario for RollingRestartScenario {
                 "restart_interval_secs": restart_interval.as_secs(),
             }),
             error: if failures > 0 {
-                Some(format!("{} operations failed during rolling restart", failures))
+                Some(format!(
+                    "{} operations failed during rolling restart",
+                    failures
+                ))
             } else if !integrity_verified {
                 Some("Data integrity verification failed".to_string())
             } else {
@@ -119,10 +141,12 @@ impl ChaosScenario for ContinuousWorkloadRollingRestartScenario {
         "Performs rolling restart while running continuous workload"
     }
 
-    async fn run(&self, cluster: &mut TestCluster, config: &ScenarioConfig) -> Result<ScenarioResult> {
+    async fn run(
+        &self,
+        cluster: &mut TestCluster,
+        config: &ScenarioConfig,
+    ) -> Result<ScenarioResult> {
         let start_time = Instant::now();
-        let mut operations = 0;
-        let mut failures = 0;
 
         info!("Starting continuous workload rolling restart scenario");
 
@@ -136,15 +160,14 @@ impl ChaosScenario for ContinuousWorkloadRollingRestartScenario {
         let workload_handle = tokio::spawn(async move {
             let mut ops = 0;
             let mut fails = 0;
-            let verifier = DataVerifier::new(endpoint);
+            let mut verifier = DataVerifier::new(endpoint);
 
             while workload_running_clone.load(std::sync::atomic::Ordering::Relaxed) {
                 let key = format!("workload-{}", ops);
-                match verifier.write_and_track(
-                    "test-bucket",
-                    &key,
-                    format!("data-{}", ops).into_bytes(),
-                ).await {
+                match verifier
+                    .write_and_track("test-bucket", &key, format!("data-{}", ops).into_bytes())
+                    .await
+                {
                     Ok(_) => ops += 1,
                     Err(_) => fails += 1,
                 }
@@ -158,7 +181,9 @@ impl ChaosScenario for ContinuousWorkloadRollingRestartScenario {
         for i in 0..config.num_nodes {
             info!("Restarting node {} of {}", i + 1, config.num_nodes);
 
-            cluster.restart_node(i).await
+            cluster
+                .restart_node(i)
+                .await
                 .map_err(|e| ChaosError::ScenarioFailed(e.to_string()))?;
 
             sleep(Duration::from_secs(15)).await;
@@ -168,14 +193,14 @@ impl ChaosScenario for ContinuousWorkloadRollingRestartScenario {
         workload_running.store(false, std::sync::atomic::Ordering::Relaxed);
 
         // Wait for workload to complete
-        let (workload_ops, workload_fails) = workload_handle.await
+        let (operations, failures) = workload_handle
+            .await
             .map_err(|e| ChaosError::ScenarioFailed(e.to_string()))?;
 
-        operations = workload_ops;
-        failures = workload_fails;
-
         // Verify data integrity
-        let integrity_verified = verifier.verify_all().await
+        let integrity_verified = verifier
+            .verify_all()
+            .await
             .map_err(|e| ChaosError::VerificationFailed(e.to_string()))?;
 
         Ok(ScenarioResult {
@@ -190,7 +215,10 @@ impl ChaosScenario for ContinuousWorkloadRollingRestartScenario {
                 "failure_rate": failures as f64 / operations as f64,
             }),
             error: if failures >= operations / 10 {
-                Some(format!("Failure rate too high: {}/{}", failures, operations))
+                Some(format!(
+                    "Failure rate too high: {}/{}",
+                    failures, operations
+                ))
             } else if !integrity_verified {
                 Some("Data integrity verification failed".to_string())
             } else {

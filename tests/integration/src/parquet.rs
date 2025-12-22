@@ -7,9 +7,7 @@
 //! - Row group filtering
 //! - Query performance
 
-use crate::{
-    setup_cluster, create_test_s3_client, unique_object_key, BucketFixture,
-};
+use crate::{setup_cluster, unique_object_key, BucketFixture};
 use aws_sdk_s3::primitives::ByteStream;
 use bytes::Bytes;
 use reqwest::Client;
@@ -69,7 +67,7 @@ fn create_mock_footer(num_row_groups: usize) -> Vec<u8> {
     for i in 0..num_row_groups {
         // Row group metadata
         footer.extend(&(i as u64).to_le_bytes()); // Offset
-        footer.extend(&1000u64.to_le_bytes());     // Num rows
+        footer.extend(&1000u64.to_le_bytes()); // Num rows
         footer.extend(&(1024 * 1024u64).to_le_bytes()); // Size
     }
 
@@ -87,7 +85,8 @@ async fn test_parquet_metadata_caching() {
     let parquet_data = create_mock_parquet_file(10);
 
     // Upload Parquet file
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -99,7 +98,8 @@ async fn test_parquet_metadata_caching() {
 
     // First read: should cache metadata
     let start = Instant::now();
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -113,7 +113,8 @@ async fn test_parquet_metadata_caching() {
 
     // Second read: should hit cache
     let start = Instant::now();
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -148,7 +149,10 @@ async fn test_parquet_metadata_caching() {
     {
         if response.status().is_success() {
             if let Ok(stats) = response.json::<serde_json::Value>().await {
-                println!("Cache stats: {}", serde_json::to_string_pretty(&stats).unwrap());
+                println!(
+                    "Cache stats: {}",
+                    serde_json::to_string_pretty(&stats).unwrap()
+                );
 
                 if let Some(hits) = stats.get("hits").and_then(|v| v.as_u64()) {
                     assert!(hits > 0, "Cache should have at least one hit");
@@ -169,7 +173,8 @@ async fn test_parquet_footer_optimization() {
     let file_size = parquet_data.len();
 
     // Upload Parquet file
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -185,7 +190,8 @@ async fn test_parquet_footer_optimization() {
     let range = format!("bytes={}-{}", file_size - footer_size, file_size - 1);
 
     let start = Instant::now();
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -229,7 +235,8 @@ async fn test_parquet_range_reads() {
     let parquet_data = create_mock_parquet_file(10);
 
     // Upload Parquet file
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -242,16 +249,17 @@ async fn test_parquet_range_reads() {
     // Simulate column chunk reads
     // Parquet readers often read specific byte ranges for column chunks
     let ranges = vec![
-        (1024, 10240),      // First column chunk
-        (50000, 60000),     // Second column chunk
-        (100000, 110000),   // Third column chunk
+        (1024, 10240),    // First column chunk
+        (50000, 60000),   // Second column chunk
+        (100000, 110000), // Third column chunk
     ];
 
     for (start, end) in ranges {
         if end <= parquet_data.len() {
             let range = format!("bytes={}-{}", start, end - 1);
 
-            let get_result = fixture.client
+            let get_result = fixture
+                .client
                 .get_object()
                 .bucket(&fixture.bucket)
                 .key(&key)
@@ -291,7 +299,8 @@ async fn test_parquet_multiple_files() {
         let key = format!("partition=2024-01/file-{}.parquet", i);
         let parquet_data = create_mock_parquet_file(5);
 
-        fixture.client
+        fixture
+            .client
             .put_object()
             .bucket(&fixture.bucket)
             .key(&key)
@@ -303,7 +312,8 @@ async fn test_parquet_multiple_files() {
     }
 
     // List Parquet files in partition
-    let list_result = fixture.client
+    let list_result = fixture
+        .client
         .list_objects_v2()
         .bucket(&fixture.bucket)
         .prefix("partition=2024-01/")
@@ -326,7 +336,8 @@ async fn test_parquet_multiple_files() {
 
     // Read metadata from all files
     for file_key in &parquet_files {
-        let head_result = fixture.client
+        let head_result = fixture
+            .client
             .head_object()
             .bucket(&fixture.bucket)
             .key(file_key)
@@ -352,7 +363,8 @@ async fn test_parquet_concurrent_reads() {
     let file_size = parquet_data.len();
 
     // Upload Parquet file
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -417,7 +429,8 @@ async fn test_parquet_stats_api() {
     let parquet_data = create_mock_parquet_file(10);
 
     // Upload Parquet file
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -477,7 +490,8 @@ async fn test_parquet_large_file() {
 
     // Upload large Parquet file
     let start = Instant::now();
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -495,7 +509,8 @@ async fn test_parquet_large_file() {
     let range = format!("bytes={}-{}", file_size - footer_size, file_size - 1);
 
     let start = Instant::now();
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -525,7 +540,8 @@ async fn test_parquet_compression_metadata() {
     let parquet_data = create_mock_parquet_file(10);
 
     // Upload with content-encoding metadata
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -538,7 +554,8 @@ async fn test_parquet_compression_metadata() {
         .unwrap();
 
     // Retrieve and verify metadata
-    let head_result = fixture.client
+    let head_result = fixture
+        .client
         .head_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -549,7 +566,7 @@ async fn test_parquet_compression_metadata() {
     assert_eq!(
         head_result
             .metadata()
-            .get("parquet-compression")
+            .and_then(|m| m.get("parquet-compression"))
             .map(|s| s.as_str()),
         Some("SNAPPY")
     );
@@ -557,7 +574,7 @@ async fn test_parquet_compression_metadata() {
     assert_eq!(
         head_result
             .metadata()
-            .get("parquet-version")
+            .and_then(|m| m.get("parquet-version"))
             .map(|s| s.as_str()),
         Some("2.0")
     );
@@ -577,7 +594,8 @@ async fn test_parquet_query_optimization() {
             let key = format!("date={}/file-{}.parquet", partition, file_num);
             let parquet_data = create_mock_parquet_file(10);
 
-            fixture.client
+            fixture
+                .client
                 .put_object()
                 .bucket(&fixture.bucket)
                 .key(&key)
@@ -591,7 +609,8 @@ async fn test_parquet_query_optimization() {
 
     // Query single partition (partition pruning)
     let start = Instant::now();
-    let list_result = fixture.client
+    let list_result = fixture
+        .client
         .list_objects_v2()
         .bucket(&fixture.bucket)
         .prefix("date=2024-01-01/")

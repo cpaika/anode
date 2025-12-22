@@ -181,9 +181,7 @@ fn bench_chunk_hash(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(*size as u64));
 
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, _| {
-            b.iter(|| {
-                calculate_mock_hash(&data)
-            });
+            b.iter(|| calculate_mock_hash(&data));
         });
     }
 

@@ -5,7 +5,7 @@
 
 use crate::{NodeId, Result, TestHarnessError};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -31,7 +31,7 @@ pub struct NodeConfig {
     /// Bootstrap mode (first node in cluster)
     pub bootstrap: bool,
     /// Additional configuration options
-    pub extra_config: HashMap<String, String>,
+    pub extra_config: BTreeMap<String, String>,
 }
 
 impl NodeConfig {
@@ -45,7 +45,7 @@ impl NodeConfig {
             data_dir,
             peers: Vec::new(),
             bootstrap: false,
-            extra_config: HashMap::new(),
+            extra_config: BTreeMap::new(),
         }
     }
 
@@ -114,7 +114,10 @@ impl TestNode {
             ));
         }
 
-        info!("Starting node {} on S3 port {}", self.config.id, self.config.s3_port);
+        info!(
+            "Starting node {} on S3 port {}",
+            self.config.id, self.config.s3_port
+        );
 
         // Create configuration file
         let config_path = self.config.data_dir.join("config.json");
@@ -159,22 +162,26 @@ impl TestNode {
             // Wait a bit for graceful shutdown
             let wait_result = tokio::time::timeout(
                 Duration::from_secs(5),
-                tokio::task::spawn_blocking(move || child.wait())
-            ).await;
+                tokio::task::spawn_blocking(move || child.wait()),
+            )
+            .await;
 
             match wait_result {
                 Ok(Ok(Ok(status))) => {
                     debug!("Node {} stopped with status: {}", self.config.id, status);
-                }
+                },
                 Ok(Ok(Err(e))) => {
                     return Err(TestHarnessError::NodeStopFailure(e.to_string()));
-                }
+                },
                 Ok(Err(e)) => {
                     return Err(TestHarnessError::NodeStopFailure(e.to_string()));
-                }
+                },
                 Err(_) => {
-                    warn!("Node {} did not stop gracefully within timeout", self.config.id);
-                }
+                    warn!(
+                        "Node {} did not stop gracefully within timeout",
+                        self.config.id
+                    );
+                },
             }
 
             info!("Node {} stopped", self.config.id);
@@ -186,8 +193,12 @@ impl TestNode {
     pub async fn kill(&mut self) -> Result<()> {
         if let Some(mut child) = self.process.take() {
             info!("Killing node {} (simulated crash)", self.config.id);
-            child.kill().map_err(|e| TestHarnessError::ProcessError(e.to_string()))?;
-            child.wait().map_err(|e| TestHarnessError::ProcessError(e.to_string()))?;
+            child
+                .kill()
+                .map_err(|e| TestHarnessError::ProcessError(e.to_string()))?;
+            child
+                .wait()
+                .map_err(|e| TestHarnessError::ProcessError(e.to_string()))?;
             info!("Node {} killed", self.config.id);
         }
         Ok(())
@@ -208,7 +219,8 @@ impl TestNode {
         let client = reqwest::Client::new();
 
         while start.elapsed() < timeout {
-            match client.get(&format!("{}/health", self.config.admin_endpoint()))
+            match client
+                .get(format!("{}/health", self.config.admin_endpoint()))
                 .timeout(Duration::from_secs(1))
                 .send()
                 .await
@@ -216,10 +228,10 @@ impl TestNode {
                 Ok(response) if response.status().is_success() => {
                     debug!("Node {} is ready", self.config.id);
                     return Ok(());
-                }
+                },
                 _ => {
                     sleep(Duration::from_millis(100)).await;
-                }
+                },
             }
         }
 
@@ -269,9 +281,9 @@ pub struct TestCluster {
     /// Test nodes in the cluster
     nodes: Vec<TestNode>,
     /// Temporary directories for nodes
-    temp_dirs: Vec<TempDir>,
+    _temp_dirs: Vec<TempDir>,
     /// Base port for port allocation
-    base_port: u16,
+    _base_port: u16,
     /// Path to the anode binary
     binary_path: String,
 }
@@ -318,8 +330,8 @@ impl TestCluster {
 
         Ok(Self {
             nodes,
-            temp_dirs,
-            base_port,
+            _temp_dirs: temp_dirs,
+            _base_port: base_port,
             binary_path: binary_path.to_string(),
         })
     }
@@ -376,7 +388,8 @@ impl TestCluster {
 
     /// Get the S3 endpoint for the first node (for client connections)
     pub fn get_s3_endpoint(&self) -> String {
-        self.nodes.first()
+        self.nodes
+            .first()
             .map(|n| n.s3_endpoint())
             .unwrap_or_else(|| "http://127.0.0.1:9000".to_string())
     }
@@ -389,7 +402,8 @@ impl TestCluster {
         while start.elapsed() < timeout {
             for node in &self.nodes {
                 if !node.is_partitioned() {
-                    match client.get(&format!("{}/cluster/leader", node.admin_endpoint()))
+                    match client
+                        .get(format!("{}/cluster/leader", node.admin_endpoint()))
                         .timeout(Duration::from_secs(1))
                         .send()
                         .await
@@ -399,8 +413,8 @@ impl TestCluster {
                                 info!("Leader elected: node {}", leader_id);
                                 return Ok(leader_id);
                             }
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     }
                 }
             }
@@ -516,8 +530,7 @@ mod tests {
 
     #[test]
     fn test_node_config_with_bootstrap() {
-        let config = NodeConfig::new(1, 9000, PathBuf::from("/tmp/test"))
-            .with_bootstrap();
+        let config = NodeConfig::new(1, 9000, PathBuf::from("/tmp/test")).with_bootstrap();
         assert!(config.bootstrap);
     }
 

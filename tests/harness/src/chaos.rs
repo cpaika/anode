@@ -1,6 +1,6 @@
 //! Chaos injection utilities for fault testing
 
-use crate::{cluster::TestCluster, ChunkId, Result, TestHarnessError};
+use crate::{cluster::TestCluster, ChunkId, Result};
 use rand::prelude::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -68,9 +68,7 @@ pub struct ChaosScheduler {
 impl ChaosScheduler {
     /// Create a new chaos scheduler
     pub fn new() -> Self {
-        Self {
-            events: Vec::new(),
-        }
+        Self { events: Vec::new() }
     }
 
     /// Add an event to be executed at a specific time
@@ -109,7 +107,7 @@ impl ChaosScheduler {
                 let num_nodes = rng.gen_range(1..3);
                 let nodes: Vec<usize> = (0..num_nodes).map(|_| rng.gen_range(0..5)).collect();
                 ChaosEvent::NetworkPartition(nodes)
-            }
+            },
             2 => ChaosEvent::SlowNetwork(
                 rng.gen_range(0..3),
                 Duration::from_millis(rng.gen_range(100..1000)),
@@ -154,12 +152,10 @@ impl ChaosScheduler {
         let start = std::time::Instant::now();
 
         let (success, error) = match event {
-            ChaosEvent::KillNode(index) => {
-                match cluster.kill_node(*index).await {
-                    Ok(()) => (true, None),
-                    Err(e) => (false, Some(e.to_string())),
-                }
-            }
+            ChaosEvent::KillNode(index) => match cluster.kill_node(*index).await {
+                Ok(()) => (true, None),
+                Err(e) => (false, Some(e.to_string())),
+            },
 
             ChaosEvent::NetworkPartition(nodes) => {
                 let mut all_success = true;
@@ -179,7 +175,7 @@ impl ChaosScheduler {
                 };
 
                 (all_success, error)
-            }
+            },
 
             ChaosEvent::SlowNetwork(index, delay) => {
                 warn!(
@@ -187,12 +183,12 @@ impl ChaosScheduler {
                     index, delay
                 );
                 (true, Some("Not fully implemented".to_string()))
-            }
+            },
 
             ChaosEvent::DiskFull(index) => {
                 warn!("DiskFull chaos not fully implemented for node {}", index);
                 (true, Some("Not fully implemented".to_string()))
-            }
+            },
 
             ChaosEvent::CorruptChunk(index, chunk_id) => {
                 warn!(
@@ -200,7 +196,7 @@ impl ChaosScheduler {
                     index, chunk_id
                 );
                 (true, Some("Not fully implemented".to_string()))
-            }
+            },
 
             ChaosEvent::ProcessPause(index, duration) => {
                 warn!(
@@ -208,14 +204,12 @@ impl ChaosScheduler {
                     index, duration
                 );
                 (true, Some("Not fully implemented".to_string()))
-            }
+            },
 
-            ChaosEvent::RestartNode(index) => {
-                match cluster.restart_node(*index).await {
-                    Ok(()) => (true, None),
-                    Err(e) => (false, Some(e.to_string())),
-                }
-            }
+            ChaosEvent::RestartNode(index) => match cluster.restart_node(*index).await {
+                Ok(()) => (true, None),
+                Err(e) => (false, Some(e.to_string())),
+            },
 
             ChaosEvent::SlowDisk(index, delay) => {
                 warn!(
@@ -223,7 +217,7 @@ impl ChaosScheduler {
                     index, delay
                 );
                 (true, Some("Not fully implemented".to_string()))
-            }
+            },
 
             ChaosEvent::ClockSkew(index, skew) => {
                 warn!(
@@ -231,7 +225,7 @@ impl ChaosScheduler {
                     index, skew
                 );
                 (true, Some("Not fully implemented".to_string()))
-            }
+            },
 
             ChaosEvent::PacketLoss(index, rate) => {
                 warn!(
@@ -239,7 +233,7 @@ impl ChaosScheduler {
                     index, rate
                 );
                 (true, Some("Not fully implemented".to_string()))
-            }
+            },
 
             ChaosEvent::BandwidthLimit(index, limit) => {
                 warn!(
@@ -247,7 +241,7 @@ impl ChaosScheduler {
                     index, limit
                 );
                 (true, Some("Not fully implemented".to_string()))
-            }
+            },
         };
 
         ChaosResult {
@@ -325,8 +319,10 @@ impl ChaosScenarios {
         let majority_size = (total_nodes / 2) + 1;
         let minority_nodes: Vec<usize> = (0..(total_nodes - majority_size)).collect();
 
-        ChaosScheduler::new()
-            .add_event(Duration::from_secs(0), ChaosEvent::NetworkPartition(minority_nodes))
+        ChaosScheduler::new().add_event(
+            Duration::from_secs(0),
+            ChaosEvent::NetworkPartition(minority_nodes),
+        )
     }
 
     /// Cascading failures

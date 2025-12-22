@@ -1,6 +1,6 @@
-use anode_client::{AnodeClient, ClientConfig};
 use anode_client::bucket::BucketExt;
 use anode_client::object::ObjectExt;
+use anode_client::{AnodeClient, ClientConfig};
 use bytes::Bytes;
 use std::time::Duration;
 
@@ -97,7 +97,10 @@ async fn test_object_put_get_delete() {
 
     // Verify object is gone
     let get_result = client.get_object(&bucket_name, key).await;
-    assert!(get_result.is_err(), "Object should not exist after deletion");
+    assert!(
+        get_result.is_err(),
+        "Object should not exist after deletion"
+    );
 
     // Cleanup
     client.delete_bucket(&bucket_name).await.unwrap();

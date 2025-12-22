@@ -1,22 +1,65 @@
+//! Query optimization for Parquet file reads.
+//!
+//! This module provides utilities for optimizing Parquet file access by:
+//! - Using column statistics for predicate pushdown
+//! - Calculating optimal byte ranges for column projection
+//! - Filtering row groups based on predicates
+//! - Merging byte ranges to minimize I/O operations
+
 use crate::metadata::{ColumnStatistics, ParquetMetadata, RowGroupMetadata};
 
-/// Optimization hints for parquet file access
+/// Optimization plan for reading a Parquet file.
+///
+/// This structure describes how to efficiently read a Parquet file based on
+/// query requirements (column projection, predicates, etc.).
 #[derive(Debug, Clone)]
 pub struct ReadOptimization {
-    /// Row groups to read (indices)
+    /// Indices of row groups to read (0-based).
     pub row_groups: Vec<usize>,
-    /// Columns to project
+    /// List of column names to project.
     pub columns: Vec<String>,
-    /// Byte ranges to fetch
+    /// Byte ranges to fetch from the file as (start, end) pairs.
     pub byte_ranges: Vec<(u64, u64)>,
-    /// Estimated result size
+    /// Estimated total bytes to read.
     pub estimated_bytes: u64,
 }
 
+/// Optimizer for Parquet file access patterns.
+///
+/// Provides static methods for analyzing Parquet metadata and generating
+/// optimized read plans.
 pub struct ParquetOptimizer;
 
 impl ParquetOptimizer {
-    /// Given column projection, determine optimal byte ranges
+    /// Optimizes column projection by calculating byte ranges to read.
+    ///
+    /// This method analyzes the Parquet metadata to determine exactly which
+    /// byte ranges need to be read from the file to retrieve the requested
+    /// columns across all row groups. It also merges adjacent ranges to
+    /// minimize the number of I/O operations.
+    ///
+    /// # Arguments
+    ///
+    /// * `metadata` - The Parquet file metadata
+    /// * `columns` - List of column names to read
+    ///
+    /// # Returns
+    ///
+    /// A [`ReadOptimization`] plan with byte ranges and estimated size
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use anode_parquet::{ParquetMetadata, optimizer::ParquetOptimizer};
+    ///
+    /// # fn example(metadata: ParquetMetadata) {
+    /// let columns = vec!["id".to_string(), "name".to_string()];
+    /// let optimization = ParquetOptimizer::optimize_column_projection(&metadata, &columns);
+    /// println!("Need to read {} bytes in {} ranges",
+    ///     optimization.estimated_bytes,
+    ///     optimization.byte_ranges.len());
+    /// # }
+    /// ```
     pub fn optimize_column_projection(
         metadata: &ParquetMetadata,
         columns: &[String],
@@ -25,7 +68,7 @@ impl ParquetOptimizer {
         let mut estimated_bytes = 0u64;
 
         // Collect byte ranges for requested columns across all row groups
-        for (rg_idx, rg) in metadata.row_groups.iter().enumerate() {
+        for (_rg_idx, rg) in metadata.row_groups.iter().enumerate() {
             for col in &rg.columns {
                 if columns.contains(&col.column_path) {
                     let start = col.file_offset as u64;
@@ -48,11 +91,39 @@ impl ParquetOptimizer {
         }
     }
 
-    /// Given row group filter, determine which row groups to read
-    pub fn filter_row_groups(
-        metadata: &ParquetMetadata,
-        predicate: &Predicate,
-    ) -> Vec<usize> {
+    /// Filters row groups based on a predicate using column statistics.
+    ///
+    /// This implements predicate pushdown optimization by using min/max statistics
+    /// to determine which row groups can be skipped. For example, if a predicate is
+    /// `WHERE age > 50` and a row group's max age is 30, that entire row group can
+    /// be skipped.
+    ///
+    /// # Arguments
+    ///
+    /// * `metadata` - The Parquet file metadata
+    /// * `predicate` - The predicate to evaluate
+    ///
+    /// # Returns
+    ///
+    /// A vector of row group indices that might contain matching rows
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use anode_parquet::{ParquetMetadata, optimizer::{ParquetOptimizer, Predicate}};
+    ///
+    /// # fn example(metadata: ParquetMetadata) {
+    /// let predicate = Predicate::Gt {
+    ///     column: "age".to_string(),
+    ///     value: vec![50, 0, 0, 0], // 50 in little-endian
+    /// };
+    /// let row_groups = ParquetOptimizer::filter_row_groups(&metadata, &predicate);
+    /// println!("Need to scan {} out of {} row groups",
+    ///     row_groups.len(),
+    ///     metadata.row_groups.len());
+    /// # }
+    /// ```
+    pub fn filter_row_groups(metadata: &ParquetMetadata, predicate: &Predicate) -> Vec<usize> {
         metadata
             .row_groups
             .iter()
@@ -62,7 +133,31 @@ impl ParquetOptimizer {
             .collect()
     }
 
-    /// Merge adjacent byte ranges for efficient I/O
+    /// Merges adjacent or nearby byte ranges to reduce I/O operations.
+    ///
+    /// This function takes a list of byte ranges and merges those that are
+    /// adjacent or within a small gap of each other. This reduces the number
+    /// of separate read operations needed.
+    ///
+    /// # Arguments
+    ///
+    /// * `ranges` - List of byte ranges as (start, end) pairs
+    /// * `gap_threshold` - Maximum gap size to merge across (in bytes)
+    ///
+    /// # Returns
+    ///
+    /// A sorted, merged list of byte ranges
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use anode_parquet::optimizer::ParquetOptimizer;
+    ///
+    /// let ranges = vec![(0, 100), (105, 200), (500, 600)];
+    /// let merged = ParquetOptimizer::merge_byte_ranges(ranges, 10);
+    /// // First two ranges merge (gap of 5 < threshold of 10)
+    /// assert_eq!(merged, vec![(0, 200), (500, 600)]);
+    /// ```
     pub fn merge_byte_ranges(mut ranges: Vec<(u64, u64)>, gap_threshold: u64) -> Vec<(u64, u64)> {
         if ranges.is_empty() {
             return Vec::new();
@@ -99,7 +194,7 @@ impl ParquetOptimizer {
                         true
                     }
                 })
-            }
+            },
             Predicate::Lt { column, value } => {
                 Self::check_column_stats(rg, column, |stats| {
                     if let Some(min) = &stats.min_value {
@@ -109,7 +204,7 @@ impl ParquetOptimizer {
                         true
                     }
                 })
-            }
+            },
             Predicate::Gt { column, value } => {
                 Self::check_column_stats(rg, column, |stats| {
                     if let Some(max) = &stats.max_value {
@@ -119,11 +214,10 @@ impl ParquetOptimizer {
                         true
                     }
                 })
-            }
+            },
             Predicate::Between { column, min, max } => {
                 Self::check_column_stats(rg, column, |stats| {
-                    if let (Some(stats_min), Some(stats_max)) =
-                        (&stats.min_value, &stats.max_value)
+                    if let (Some(stats_min), Some(stats_max)) = (&stats.min_value, &stats.max_value)
                     {
                         // Check if ranges overlap
                         !(stats_max < min || stats_min > max)
@@ -131,13 +225,13 @@ impl ParquetOptimizer {
                         true
                     }
                 })
-            }
+            },
             Predicate::And(left, right) => {
                 Self::row_group_matches(rg, left) && Self::row_group_matches(rg, right)
-            }
+            },
             Predicate::Or(left, right) => {
                 Self::row_group_matches(rg, left) || Self::row_group_matches(rg, right)
-            }
+            },
         }
     }
 
@@ -153,7 +247,17 @@ impl ParquetOptimizer {
             .unwrap_or(true) // If no stats, can't filter out
     }
 
-    /// Estimate the total bytes to read given optimization
+    /// Estimates the total bytes to read given an optimization plan.
+    ///
+    /// This sums up the sizes of all byte ranges in the optimization plan.
+    ///
+    /// # Arguments
+    ///
+    /// * `optimization` - The read optimization plan
+    ///
+    /// # Returns
+    ///
+    /// Total bytes to read
     pub fn estimate_read_size(optimization: &ReadOptimization) -> u64 {
         optimization
             .byte_ranges
@@ -162,11 +266,21 @@ impl ParquetOptimizer {
             .sum()
     }
 
-    /// Calculate selectivity ratio (0.0 to 1.0) for a given predicate
-    pub fn calculate_selectivity(
-        metadata: &ParquetMetadata,
-        predicate: &Predicate,
-    ) -> f64 {
+    /// Calculates the selectivity ratio for a predicate.
+    ///
+    /// Selectivity is the fraction of rows that might match the predicate,
+    /// estimated based on row group filtering. A value of 0.0 means no rows
+    /// match, 1.0 means all rows match.
+    ///
+    /// # Arguments
+    ///
+    /// * `metadata` - The Parquet file metadata
+    /// * `predicate` - The predicate to evaluate
+    ///
+    /// # Returns
+    ///
+    /// A ratio between 0.0 and 1.0 representing estimated selectivity
+    pub fn calculate_selectivity(metadata: &ParquetMetadata, predicate: &Predicate) -> f64 {
         let total_rows = metadata.num_rows as f64;
         if total_rows == 0.0 {
             return 0.0;
@@ -183,13 +297,46 @@ impl ParquetOptimizer {
     }
 }
 
+/// A predicate for filtering Parquet row groups.
+///
+/// Predicates are used with column statistics to determine which row groups
+/// can be skipped during query execution. Values are represented as raw bytes
+/// to support all Parquet data types.
 #[derive(Debug, Clone)]
 pub enum Predicate {
-    Eq { column: String, value: Vec<u8> },
-    Lt { column: String, value: Vec<u8> },
-    Gt { column: String, value: Vec<u8> },
-    Between { column: String, min: Vec<u8>, max: Vec<u8> },
+    /// Equality predicate: `column = value`
+    Eq {
+        /// Column name to filter on
+        column: String,
+        /// Value to compare against (raw bytes)
+        value: Vec<u8>,
+    },
+    /// Less than predicate: `column < value`
+    Lt {
+        /// Column name to filter on
+        column: String,
+        /// Value to compare against (raw bytes)
+        value: Vec<u8>,
+    },
+    /// Greater than predicate: `column > value`
+    Gt {
+        /// Column name to filter on
+        column: String,
+        /// Value to compare against (raw bytes)
+        value: Vec<u8>,
+    },
+    /// Range predicate: `column BETWEEN min AND max`
+    Between {
+        /// Column name to filter on
+        column: String,
+        /// Minimum value (inclusive, raw bytes)
+        min: Vec<u8>,
+        /// Maximum value (inclusive, raw bytes)
+        max: Vec<u8>,
+    },
+    /// Logical AND of two predicates
     And(Box<Predicate>, Box<Predicate>),
+    /// Logical OR of two predicates
     Or(Box<Predicate>, Box<Predicate>),
 }
 
@@ -292,7 +439,7 @@ mod tests {
                             null_count: Some(3),
                             distinct_count: Some(97),
                             min_value: Some(vec![0, 0, 0, 150]),
-                            max_value: Some(vec![0, 0, 0, 300]),
+                            max_value: Some(vec![0, 0, 1, 44]), // 300 in big-endian-ish format (256 + 44)
                         }),
                     },
                 ],
@@ -540,17 +687,20 @@ mod tests {
 
         let filtered = ParquetOptimizer::filter_row_groups(&metadata, &predicate);
 
-        // Without statistics, we can't filter out, so both row groups included
-        assert_eq!(filtered.len(), 2);
+        // Without statistics on RG0, we can't filter it out (included)
+        // RG1 has statistics [101, 200] which excludes 50 (filtered out)
+        // Result: only RG0 is included
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0], 0);
     }
 
     #[test]
     fn test_byte_range_merging_multiple_columns() {
         let ranges = vec![
-            (100, 200),  // Column 1, RG 1
-            (200, 300),  // Column 2, RG 1 (adjacent)
-            (500, 600),  // Column 1, RG 2
-            (610, 710),  // Column 2, RG 2 (small gap)
+            (100, 200), // Column 1, RG 1
+            (200, 300), // Column 2, RG 1 (adjacent)
+            (500, 600), // Column 1, RG 2
+            (610, 710), // Column 2, RG 2 (small gap)
         ];
 
         let merged = ParquetOptimizer::merge_byte_ranges(ranges, 20);

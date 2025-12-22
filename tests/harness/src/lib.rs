@@ -8,22 +8,24 @@
 //! - Correctness assertions
 //! - Metrics collection
 
-pub mod cluster;
-pub mod simulation;
 pub mod assertions;
 pub mod chaos;
-pub mod metrics;
-pub mod workload;
+pub mod cluster;
 pub mod history;
+pub mod metrics;
+pub mod simulation;
+pub mod workload;
 
 // Re-export commonly used types
-pub use cluster::{TestCluster, TestNode, NodeConfig};
-pub use simulation::{Simulation, SimulationResult};
 pub use assertions::*;
-pub use chaos::{ChaosEvent, ChaosScheduler, ChaosResult};
+pub use chaos::{ChaosEvent, ChaosResult, ChaosScheduler};
+pub use cluster::{NodeConfig, TestCluster, TestNode};
+pub use history::{HistoryEntry, OperationHistory, OperationResult, OperationValue};
 pub use metrics::TestMetrics;
-pub use workload::{Workload, Operation, RandomWorkload, SequentialWorkload, HotspotWorkload, MixedWorkload};
-pub use history::{OperationHistory, OperationResult, OperationValue, HistoryEntry};
+pub use simulation::{Simulation, SimulationResult};
+pub use workload::{
+    HotspotWorkload, MixedWorkload, Operation, RandomWorkload, SequentialWorkload, Workload,
+};
 
 use thiserror::Error;
 

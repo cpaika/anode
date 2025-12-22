@@ -67,11 +67,7 @@ pub async fn test_data_survives_crash() -> Result<()> {
     let response = client.get(&url).send().await?;
     let read_value = response.bytes().await?;
 
-    assert_eq!(
-        read_value.as_ref(),
-        value,
-        "Data should survive node crash"
-    );
+    assert_eq!(read_value.as_ref(), value, "Data should survive node crash");
 
     cluster.stop().await?;
     Ok(())
@@ -164,11 +160,7 @@ pub async fn test_fsync_durability() -> Result<()> {
     let response = client.get(&url).send().await?;
     let read_value = response.bytes().await?;
 
-    assert_eq!(
-        read_value.as_ref(),
-        value,
-        "Data should survive power loss"
-    );
+    assert_eq!(read_value.as_ref(), value, "Data should survive power loss");
 
     cluster.stop().await?;
     Ok(())
@@ -216,13 +208,13 @@ pub async fn test_uncommitted_write_behavior() -> Result<()> {
                 value,
                 "If uncommitted write completed, value should be correct"
             );
-        }
+        },
         Ok(resp) if resp.status().as_u16() == 404 => {
             // If it doesn't exist, that's also acceptable (rolled back)
-        }
+        },
         _ => {
             // Any other state is acceptable as long as it's consistent
-        }
+        },
     }
 
     cluster.stop().await?;

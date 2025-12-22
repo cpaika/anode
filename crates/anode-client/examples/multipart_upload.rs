@@ -4,8 +4,8 @@ use bytes::Bytes;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a client configuration
-    let config = ClientConfig::new("http://localhost:8080")
-        .with_credentials("minioadmin", "minioadmin");
+    let config =
+        ClientConfig::new("http://localhost:8080").with_credentials("minioadmin", "minioadmin");
 
     let client = AnodeClient::new(config)?;
 

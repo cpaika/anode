@@ -24,32 +24,28 @@ fn bench_memory_per_object(c: &mut Criterion) {
     for count in [100, 1000, 10000].iter() {
         group.throughput(Throughput::Elements(*count as u64));
 
-        group.bench_with_input(
-            BenchmarkId::from_parameter(count),
-            count,
-            |b, &count| {
-                b.iter(|| {
-                    let (objects, stats) = measure_cpu_memory(|| {
-                        let mut objects = Vec::new();
-                        for i in 0..count {
-                            let obj = ObjectEntry {
-                                key: format!("bucket/object-{:05}", i),
-                                size: 1024 * 1024,
-                                chunk_ids: vec![[i as u8; 32]],
-                                metadata: HashMap::new(),
-                            };
-                            objects.push(obj);
-                        }
-                        objects
-                    });
-
-                    let memory_per_object = (stats.end_memory - stats.start_memory) / count as u64;
-                    let _avg = memory_per_object;
-
+        group.bench_with_input(BenchmarkId::from_parameter(count), count, |b, &count| {
+            b.iter(|| {
+                let (objects, stats) = measure_cpu_memory(|| {
+                    let mut objects = Vec::new();
+                    for i in 0..count {
+                        let obj = ObjectEntry {
+                            key: format!("bucket/object-{:05}", i),
+                            size: 1024 * 1024,
+                            chunk_ids: vec![[i as u8; 32]],
+                            metadata: HashMap::new(),
+                        };
+                        objects.push(obj);
+                    }
                     objects
                 });
-            },
-        );
+
+                let memory_per_object = (stats.end_memory - stats.start_memory) / count as u64;
+                let _avg = memory_per_object;
+
+                objects
+            });
+        });
     }
 
     group.finish();
@@ -83,7 +79,8 @@ fn bench_memory_per_connection(c: &mut Criterion) {
                         conns
                     });
 
-                    let memory_per_conn = (stats.end_memory - stats.start_memory) / connections as u64;
+                    let memory_per_conn =
+                        (stats.end_memory - stats.start_memory) / connections as u64;
                     let _avg = memory_per_conn;
 
                     conns
@@ -255,7 +252,10 @@ fn bench_chunk_metadata_overhead(c: &mut Criterion) {
                                 hash,
                                 size: 4096,
                                 ref_count: 1,
-                                storage_path: format!("/data/chunks/{:02x}/{:02x}/{}", hash[0], hash[1], i),
+                                storage_path: format!(
+                                    "/data/chunks/{:02x}/{:02x}/{}",
+                                    hash[0], hash[1], i
+                                ),
                             };
 
                             chunks.insert(hash, metadata);

@@ -1,0 +1,20 @@
+# Rust
+target/
+Cargo.lock
+
+# Test outputs
+chaos_test_report.json
+*.log
+
+# Docker
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

@@ -6,7 +6,6 @@ use anode_chaos_tests::scenarios::cascade_failure::*;
 use anode_chaos_tests::scenarios::{ChaosScenario, ScenarioConfig};
 use anode_test_harness::TestCluster;
 use std::time::Duration;
-use tracing_subscriber;
 
 #[tokio::test]
 #[ignore] // Requires running cluster
@@ -33,8 +32,15 @@ async fn test_cascade_failure() {
     cluster.stop().await.ok();
 
     let result = result.expect("Scenario failed");
-    assert!(result.success, "Cascade failure scenario failed: {:?}", result.error);
-    assert!(result.integrity_verified, "Data integrity verification failed");
+    assert!(
+        result.success,
+        "Cascade failure scenario failed: {:?}",
+        result.error
+    );
+    assert!(
+        result.integrity_verified,
+        "Data integrity verification failed"
+    );
 }
 
 #[tokio::test]
@@ -62,7 +68,11 @@ async fn test_rapid_cascade() {
     cluster.stop().await.ok();
 
     let result = result.expect("Scenario failed");
-    assert!(result.success, "Rapid cascade scenario failed: {:?}", result.error);
+    assert!(
+        result.success,
+        "Rapid cascade scenario failed: {:?}",
+        result.error
+    );
 }
 
 #[tokio::test]
@@ -90,5 +100,9 @@ async fn test_recovery_under_load() {
     cluster.stop().await.ok();
 
     let result = result.expect("Scenario failed");
-    assert!(result.success, "Recovery under load scenario failed: {:?}", result.error);
+    assert!(
+        result.success,
+        "Recovery under load scenario failed: {:?}",
+        result.error
+    );
 }

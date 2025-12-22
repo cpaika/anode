@@ -1,16 +1,55 @@
+//! Blob storage for chunk data.
+//!
+//! This module provides low-level storage of chunk data on the filesystem.
+//! Chunks are stored in a sharded directory structure based on their hash prefix
+//! to avoid filesystem performance issues with too many files in a single directory.
+
 use crate::chunks::ChunkId;
 use crate::error::{Result, StorageError};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
+/// Blob store for chunk data storage.
+///
+/// The `BlobStore` manages physical storage of chunk data on disk.
+/// It uses a sharded directory structure (based on chunk ID prefix) to
+/// distribute files across directories for better filesystem performance.
+///
+/// # Directory Structure
+///
+/// Chunks are stored in a two-level directory structure:
+/// ```text
+/// data_dir/
+///   ab/
+///     cd/
+///       abcd1234...  (chunk file)
+/// ```
+///
+/// The first 2 characters of the chunk ID form the first level directory,
+/// and the next 2 characters form the second level.
 pub struct BlobStore {
     data_dir: PathBuf,
 }
 
 impl BlobStore {
+    /// Create a new blob store.
+    ///
+    /// Creates the data directory if it doesn't exist.
+    ///
+    /// # Arguments
+    ///
+    /// * `data_dir` - Base directory for storing blob data
+    ///
+    /// # Returns
+    ///
+    /// A new `BlobStore` instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the directory cannot be created.
     pub fn new(data_dir: PathBuf) -> Result<Self> {
         info!("Initializing blob store at {:?}", data_dir);
         fs::create_dir_all(&data_dir)?;
@@ -177,9 +216,14 @@ impl BlobStore {
     }
 }
 
+/// Statistics about the blob store.
+///
+/// Provides counts of stored chunks and total storage size.
 #[derive(Debug, Clone)]
 pub struct BlobStoreStats {
+    /// Number of chunks stored
     pub chunk_count: u64,
+    /// Total size of all chunks in bytes
     pub total_size: u64,
 }
 
@@ -344,5 +388,121 @@ mod tests {
         let stats = store.get_stats().unwrap();
         assert_eq!(stats.chunk_count, 2);
         assert_eq!(stats.total_size, (data1.len() + data2.len()) as u64);
+    }
+
+    #[test]
+    fn test_new_creates_data_directory() {
+        let temp = TempDir::new().unwrap();
+        let data_dir = temp.path().join("blob_store_data");
+
+        // Verify directory doesn't exist yet
+        assert!(!data_dir.exists());
+
+        // Create BlobStore
+        let _store = BlobStore::new(data_dir.clone()).unwrap();
+
+        // Verify directory was created
+        assert!(data_dir.exists());
+        assert!(data_dir.is_dir());
+    }
+
+    #[test]
+    fn test_write_chunk_stores_at_correct_path() {
+        let (store, _temp) = create_test_store();
+
+        let data = b"Test data for path verification";
+        let chunk_id = compute_chunk_id(data);
+
+        // Write the chunk
+        store.write_chunk(&chunk_id, data).unwrap();
+
+        // Get the expected path
+        let expected_path = store.get_chunk_path(&chunk_id);
+
+        // Verify the file exists at the expected path
+        assert!(
+            expected_path.exists(),
+            "Chunk file should exist at path: {:?}",
+            expected_path
+        );
+        assert!(
+            expected_path.is_file(),
+            "Expected path should be a file: {:?}",
+            expected_path
+        );
+
+        // Verify the hierarchical directory structure
+        let id = &chunk_id.0;
+        if id.len() >= 4 {
+            let level1 = &id[0..2];
+            let level2 = &id[2..4];
+
+            // Expected path should be: data_dir/level1/level2/chunk_id
+            let expected_parent = store.data_dir.join(level1).join(level2);
+            assert_eq!(
+                expected_path.parent().unwrap(),
+                expected_parent,
+                "Chunk should be stored in correct hierarchical directory"
+            );
+
+            // Verify directory structure exists
+            assert!(
+                store.data_dir.join(level1).exists(),
+                "Level 1 directory should exist"
+            );
+            assert!(expected_parent.exists(), "Level 2 directory should exist");
+        }
+
+        // Verify the file contains the correct data
+        let file_data = fs::read(&expected_path).unwrap();
+        assert_eq!(
+            data,
+            file_data.as_slice(),
+            "File contents should match written data"
+        );
+    }
+
+    #[test]
+    fn test_delete_chunk_removes_file() {
+        let (store, _temp) = create_test_store();
+
+        let data = b"Data to be deleted from disk";
+        let chunk_id = compute_chunk_id(data);
+
+        // Write the chunk
+        store.write_chunk(&chunk_id, data).unwrap();
+
+        // Get the file path and verify it exists
+        let chunk_path = store.get_chunk_path(&chunk_id);
+        assert!(
+            chunk_path.exists(),
+            "Chunk file should exist before deletion at path: {:?}",
+            chunk_path
+        );
+        assert!(
+            chunk_path.is_file(),
+            "Chunk path should be a file before deletion"
+        );
+
+        // Delete the chunk
+        let deleted = store.delete_chunk(&chunk_id).unwrap();
+        assert!(
+            deleted,
+            "delete_chunk should return true when deleting existing chunk"
+        );
+
+        // Verify the file no longer exists on disk
+        assert!(
+            !chunk_path.exists(),
+            "Chunk file should not exist after deletion at path: {:?}",
+            chunk_path
+        );
+
+        // Verify attempting to delete again returns false
+        let deleted_again = store.delete_chunk(&chunk_id).unwrap();
+        assert!(
+            !deleted_again,
+            "delete_chunk should return false when chunk doesn't exist"
+        );
     }
 }

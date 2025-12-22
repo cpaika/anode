@@ -41,37 +41,53 @@ serde_json = "1.0"
 # Network manipulation
 nix = { version = "0.29", features = ["net"] }
 
+# Temporary files for testing
+tempfile = "3.8"
+
 [[test]]
 name = "node_crash"
 path = "tests/node_crash.rs"
-harness = false
 
 [[test]]
 name = "network_partition"
 path = "tests/network_partition.rs"
-harness = false
 
 [[test]]
 name = "disk_failure"
 path = "tests/disk_failure.rs"
-harness = false
 
 [[test]]
 name = "slow_network"
 path = "tests/slow_network.rs"
-harness = false
 
 [[test]]
 name = "rolling_restart"
 path = "tests/rolling_restart.rs"
-harness = false
 
 [[test]]
 name = "split_brain"
 path = "tests/split_brain.rs"
-harness = false
 
 [[test]]
 name = "cascade_failure"
 path = "tests/cascade_failure.rs"
-harness = false
+
+[[test]]
+name = "minority_cannot_write"
+path = "tests/minority_cannot_write.rs"
+
+[[test]]
+name = "leader_crash_during_write"
+path = "tests/leader_crash_during_write.rs"
+
+[[test]]
+name = "corrupt_chunk"
+path = "tests/corrupt_chunk.rs"
+
+[[test]]
+name = "majority_can_write"
+path = "tests/majority_can_write.rs"
+
+[[test]]
+name = "full_cluster_restart"
+path = "tests/full_cluster_restart.rs"

@@ -1,46 +1,80 @@
+//! Cluster management protocol implementation.
+//!
+//! This module implements the gRPC services for cluster membership management,
+//! including node joins, leaves, and status queries. It provides both the
+//! server-side service implementation and the traits that must be implemented
+//! by cluster managers.
+
 use crate::error::ProtocolResult;
 use crate::proto;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
-/// Cluster management service server implementation
+/// Cluster management service server implementation.
 ///
 /// This service handles cluster membership operations including nodes
-/// joining/leaving the cluster and retrieving cluster status.
+/// joining/leaving the cluster and retrieving cluster status. It wraps
+/// a [`ClusterManager`] implementation and exposes it as a gRPC service.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use anode_protocol::cluster::{ClusterServiceImpl, ClusterManager};
+/// use std::sync::Arc;
+///
+/// // Assume we have a ClusterManager implementation
+/// let manager: Arc<dyn ClusterManager> = ...;
+/// let service = ClusterServiceImpl::new(manager);
+/// ```
 pub struct ClusterServiceImpl<C> {
     cluster_manager: Arc<C>,
 }
 
 impl<C> ClusterServiceImpl<C> {
+    /// Creates a new ClusterServiceImpl wrapping the given cluster manager.
     pub fn new(cluster_manager: Arc<C>) -> Self {
         Self { cluster_manager }
     }
 }
 
-/// Trait that must be implemented by the cluster manager
+/// Trait that must be implemented by the cluster manager.
 ///
-/// This trait abstracts the actual cluster management implementation from the gRPC service layer.
+/// This trait abstracts the actual cluster management implementation from the
+/// gRPC service layer. Implementors provide the business logic for handling
+/// cluster operations.
 #[tonic::async_trait]
 pub trait ClusterManager: Send + Sync + 'static {
-    /// Handle node join request
+    /// Handles a node join request.
+    ///
+    /// Called when a new node wants to join the cluster. The implementation
+    /// should validate the request and update cluster membership.
     async fn join(
         &self,
         request: proto::cluster::JoinRequest,
     ) -> ProtocolResult<proto::cluster::JoinResponse>;
 
-    /// Handle node leave request
+    /// Handles a node leave request.
+    ///
+    /// Called when a node wants to gracefully leave the cluster. The
+    /// implementation should redistribute data and update membership.
     async fn leave(
         &self,
         request: proto::cluster::LeaveRequest,
     ) -> ProtocolResult<proto::cluster::LeaveResponse>;
 
-    /// Get cluster status
+    /// Returns the current cluster status.
+    ///
+    /// Provides information about all nodes, placement groups, and the
+    /// current leader.
     async fn get_cluster_status(
         &self,
         request: proto::cluster::GetClusterStatusRequest,
     ) -> ProtocolResult<proto::cluster::ClusterStatus>;
 
-    /// Get status of a specific node
+    /// Returns status for a specific node.
+    ///
+    /// Provides detailed information about a node including disk usage,
+    /// object count, and current state.
     async fn get_node_status(
         &self,
         request: proto::cluster::GetNodeStatusRequest,
@@ -67,14 +101,10 @@ impl<C: ClusterManager> proto::cluster::cluster_service_server::ClusterService
             "Received Join request"
         );
 
-        let response = self
-            .cluster_manager
-            .join(req)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "Join request failed");
-                Status::from(e)
-            })?;
+        let response = self.cluster_manager.join(req).await.map_err(|e| {
+            tracing::error!(error = %e, "Join request failed");
+            Status::from(e)
+        })?;
 
         tracing::info!(
             success = response.success,
@@ -100,14 +130,10 @@ impl<C: ClusterManager> proto::cluster::cluster_service_server::ClusterService
             "Received Leave request"
         );
 
-        let response = self
-            .cluster_manager
-            .leave(req)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "Leave request failed");
-                Status::from(e)
-            })?;
+        let response = self.cluster_manager.leave(req).await.map_err(|e| {
+            tracing::error!(error = %e, "Leave request failed");
+            Status::from(e)
+        })?;
 
         tracing::info!(
             success = response.success,
@@ -140,7 +166,11 @@ impl<C: ClusterManager> proto::cluster::cluster_service_server::ClusterService
             })?;
 
         tracing::debug!(
-            cluster_id = response.cluster_id.as_ref().map(|id| &id.id).unwrap_or(&String::new()),
+            cluster_id = response
+                .cluster_id
+                .as_ref()
+                .map(|id| &id.id)
+                .unwrap_or(&String::new()),
             nodes_count = response.nodes.len(),
             placement_groups_count = response.placement_groups.len(),
             "Sending GetClusterStatus response"
@@ -185,31 +215,46 @@ impl<C: ClusterManager> proto::cluster::cluster_service_server::ClusterService
     }
 }
 
-/// Helper functions for working with node states
+/// Helper functions for working with node states.
+///
+/// This module provides utilities for checking and converting node state
+/// values from the protobuf enum representation.
 pub mod node_state {
     use crate::proto::cluster::NodeState;
 
-    /// Check if a node is in active state
+    /// Checks if a node is in active state.
+    ///
+    /// Active nodes are fully participating in the cluster and can
+    /// handle read and write requests.
     pub fn is_active(state: i32) -> bool {
         state == NodeState::Active as i32
     }
 
-    /// Check if a node is joining
+    /// Checks if a node is joining.
+    ///
+    /// Joining nodes are in the process of synchronizing data and
+    /// establishing cluster membership.
     pub fn is_joining(state: i32) -> bool {
         state == NodeState::Joining as i32
     }
 
-    /// Check if a node is leaving
+    /// Checks if a node is leaving.
+    ///
+    /// Leaving nodes are gracefully departing the cluster and
+    /// transferring their data to other nodes.
     pub fn is_leaving(state: i32) -> bool {
         state == NodeState::Leaving as i32
     }
 
-    /// Check if a node is down
+    /// Checks if a node is down.
+    ///
+    /// Down nodes are not responding to heartbeats and are considered
+    /// unavailable.
     pub fn is_down(state: i32) -> bool {
         state == NodeState::Down as i32
     }
 
-    /// Convert NodeState enum to string
+    /// Converts a NodeState enum value to a string representation.
     pub fn to_string(state: i32) -> &'static str {
         match state {
             s if s == NodeState::Unknown as i32 => "UNKNOWN",
@@ -380,10 +425,7 @@ mod tests {
         let response = service.get_cluster_status(request).await.unwrap();
         let resp = response.into_inner();
 
-        assert_eq!(
-            resp.cluster_id.as_ref().unwrap().id,
-            "test-cluster"
-        );
+        assert_eq!(resp.cluster_id.as_ref().unwrap().id, "test-cluster");
         assert_eq!(resp.nodes.len(), 3);
         assert_eq!(resp.leader.as_ref().unwrap().id, 1);
     }
@@ -417,13 +459,7 @@ mod tests {
         assert!(node_state::is_joining(NodeState::Joining as i32));
         assert!(!node_state::is_joining(NodeState::Active as i32));
 
-        assert_eq!(
-            node_state::to_string(NodeState::Active as i32),
-            "ACTIVE"
-        );
-        assert_eq!(
-            node_state::to_string(NodeState::Down as i32),
-            "DOWN"
-        );
+        assert_eq!(node_state::to_string(NodeState::Active as i32), "ACTIVE");
+        assert_eq!(node_state::to_string(NodeState::Down as i32), "DOWN");
     }
 }

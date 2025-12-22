@@ -1,0 +1,35 @@
+# Dockerfile for chaos testing
+FROM rust:1.75 as builder
+
+WORKDIR /app
+
+# Copy workspace files
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY tests ./tests
+
+# Build chaos tests
+WORKDIR /app/tests/chaos
+RUN cargo build --release --tests
+
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    iproute2 \
+    iptables \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy built tests
+COPY --from=builder /app/target/release/deps/anode_chaos_tests-* ./
+COPY --from=builder /app/tests/chaos ./tests/chaos
+
+# Set environment
+ENV RUST_LOG=info
+ENV RUST_BACKTRACE=1
+
+CMD ["cargo", "test", "--", "--nocapture"]

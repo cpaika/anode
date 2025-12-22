@@ -65,23 +65,12 @@ impl ScrubberConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct ScrubStatusInternal {
     running: bool,
     last_scrub: Option<DateTime<Utc>>,
     next_scrub: Option<DateTime<Utc>>,
     progress: Option<ScrubProgress>,
-}
-
-impl Default for ScrubStatusInternal {
-    fn default() -> Self {
-        Self {
-            running: false,
-            last_scrub: None,
-            next_scrub: None,
-            progress: None,
-        }
-    }
 }
 
 impl<C: ClusterClient + 'static> Scrubber<C> {
@@ -157,7 +146,7 @@ impl<C: ClusterClient + 'static> Scrubber<C> {
                                     .unwrap(),
                         );
                         status.progress = None;
-                    }
+                    },
                     Err(e) => {
                         warn!("Scrub failed: {}", e);
 
@@ -169,7 +158,7 @@ impl<C: ClusterClient + 'static> Scrubber<C> {
                                     .unwrap(),
                         );
                         status.progress = None;
-                    }
+                    },
                 }
             }
 
@@ -208,10 +197,7 @@ impl<C: ClusterClient + 'static> Scrubber<C> {
         // Run integrity check
         let report = self.checker.full_scan().await?;
 
-        debug!(
-            "Integrity scan found {} issues",
-            report.total_issues()
-        );
+        debug!("Integrity scan found {} issues", report.total_issues());
 
         // Update progress
         {
@@ -238,11 +224,11 @@ impl<C: ClusterClient + 'static> Scrubber<C> {
                         result.chunks_repaired + result.chunks_failed
                     );
                     Some(result)
-                }
+                },
                 Err(e) => {
                     warn!("Auto-repair failed: {}", e);
                     None
-                }
+                },
             }
         } else {
             None
@@ -339,7 +325,9 @@ mod tests {
     use crate::integrity::IntegrityChecker;
     use crate::metadata::{BucketConfig, MetadataStore};
     use crate::repair::{MockClusterClient, RepairManager};
-    use anode_protocol::{ChunkId as ProtocolChunkId, ObjectKey, ObjectManifest as ProtocolManifest};
+    use anode_protocol::{
+        ChunkId as ProtocolChunkId, ObjectKey, ObjectManifest as ProtocolManifest,
+    };
     use sha2::{Digest, Sha256};
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -359,11 +347,7 @@ mod tests {
         let cluster = Arc::new(MockClusterClient::new());
 
         let checker = Arc::new(IntegrityChecker::new(metadata.clone(), blobs.clone()));
-        let repair = Arc::new(RepairManager::new(
-            metadata.clone(),
-            blobs.clone(),
-            cluster,
-        ));
+        let repair = Arc::new(RepairManager::new(metadata.clone(), blobs.clone(), cluster));
 
         let config = ScrubberConfig::default()
             .with_interval(Duration::from_secs(60))
@@ -568,9 +552,7 @@ mod tests {
 
         // Start scrub in background
         let scrubber_clone = scrubber.clone();
-        let handle = tokio::spawn(async move {
-            scrubber_clone.scrub().await.unwrap()
-        });
+        let handle = tokio::spawn(async move { scrubber_clone.scrub().await.unwrap() });
 
         // Wait a bit and check status
         tokio::time::sleep(Duration::from_millis(100)).await;

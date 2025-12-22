@@ -135,6 +135,11 @@ spec:
           readOnly: true
         - name: tmp
           mountPath: /tmp
+        {{- if .Values.tls.enabled }}
+        - name: tls
+          mountPath: /etc/anode/tls
+          readOnly: true
+        {{- end }}
         {{- with .Values.extraVolumeMounts }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -151,6 +156,16 @@ spec:
           defaultMode: 0400
       - name: tmp
         emptyDir: {}
+      {{- if .Values.tls.enabled }}
+      - name: tls
+        secret:
+          {{- if .Values.tls.secretName }}
+          secretName: {{ .Values.tls.secretName }}
+          {{- else }}
+          secretName: {{ include "anode.fullname" . }}-tls
+          {{- end }}
+          defaultMode: 0400
+      {{- end }}
       {{- with .Values.extraVolumes }}
       {{- toYaml . | nindent 6 }}
       {{- end }}

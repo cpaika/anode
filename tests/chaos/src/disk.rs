@@ -31,7 +31,7 @@ impl DiskChaos {
         // Get current disk usage
         let total_space = self.get_total_space()?;
         let used_space = self.get_used_space()?;
-        let available_space = total_space - used_space;
+        let _available_space = total_space - used_space;
 
         // Calculate how much to fill
         let target_used = (total_space * target_percent as u64) / 100;
@@ -48,19 +48,17 @@ impl DiskChaos {
         let fillfile = self.data_dir.join("fillfile");
 
         let output = Command::new("dd")
-            .args(&[
+            .args([
                 "if=/dev/zero",
                 &format!("of={}", fillfile.display()),
-                &format!("bs=1M"),
+                "bs=1M",
                 &format!("count={}", bytes_to_fill / (1024 * 1024)),
             ])
             .output()
             .map_err(|e| ChaosError::DiskChaos(format!("Failed to fill disk: {}", e)))?;
 
         if !output.status.success() {
-            return Err(ChaosError::DiskChaos(
-                "dd command failed".to_string(),
-            ));
+            return Err(ChaosError::DiskChaos("dd command failed".to_string()));
         }
 
         Ok(fillfile)
@@ -194,9 +192,7 @@ impl DiskChaos {
     fn get_total_space(&self) -> Result<u64> {
         #[cfg(unix)]
         {
-            use std::os::unix::fs::MetadataExt;
-
-            let metadata = std::fs::metadata(&self.data_dir)
+            let _metadata = std::fs::metadata(&self.data_dir)
                 .map_err(|e| ChaosError::DiskChaos(format!("Failed to get metadata: {}", e)))?;
 
             // This is a simplified version - would need statvfs for accurate info
@@ -276,7 +272,7 @@ mod tests {
 
         let corrupted = std::fs::read(&test_file).unwrap();
         assert_eq!(corrupted.len(), 11); // Same length
-        // Content should be different (with very high probability)
+                                         // Content should be different (with very high probability)
     }
 
     #[tokio::test]

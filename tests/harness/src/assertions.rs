@@ -1,16 +1,12 @@
 //! Correctness assertion helpers for distributed systems testing
 
-use crate::{cluster::TestCluster, BucketName, ObjectKey, Result, TestHarnessError};
+use crate::{cluster::TestCluster, Result, TestHarnessError};
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, info};
 
 /// Assert that an object exists in the cluster
-pub async fn assert_object_exists(
-    cluster: &TestCluster,
-    bucket: &str,
-    key: &str,
-) -> Result<()> {
+pub async fn assert_object_exists(cluster: &TestCluster, bucket: &str, key: &str) -> Result<()> {
     let client = reqwest::Client::new();
     let url = format!("{}/{}/{}", cluster.get_s3_endpoint(), bucket, key);
 
@@ -18,7 +14,7 @@ pub async fn assert_object_exists(
         Ok(response) if response.status().is_success() => {
             debug!("Object {}/{} exists", bucket, key);
             Ok(())
-        }
+        },
         Ok(response) => Err(TestHarnessError::AssertionFailed(format!(
             "Object {}/{} does not exist: status {}",
             bucket,
@@ -43,25 +39,23 @@ pub async fn assert_object_content(
     let url = format!("{}/{}/{}", cluster.get_s3_endpoint(), bucket, key);
 
     match client.get(&url).send().await {
-        Ok(response) if response.status().is_success() => {
-            match response.bytes().await {
-                Ok(bytes) if bytes.as_ref() == expected => {
-                    debug!("Object {}/{} has expected content", bucket, key);
-                    Ok(())
-                }
-                Ok(bytes) => Err(TestHarnessError::AssertionFailed(format!(
-                    "Object {}/{} content mismatch: expected {} bytes, got {} bytes",
-                    bucket,
-                    key,
-                    expected.len(),
-                    bytes.len()
-                ))),
-                Err(e) => Err(TestHarnessError::AssertionFailed(format!(
-                    "Failed to read object {}/{}: {}",
-                    bucket, key, e
-                ))),
-            }
-        }
+        Ok(response) if response.status().is_success() => match response.bytes().await {
+            Ok(bytes) if bytes.as_ref() == expected => {
+                debug!("Object {}/{} has expected content", bucket, key);
+                Ok(())
+            },
+            Ok(bytes) => Err(TestHarnessError::AssertionFailed(format!(
+                "Object {}/{} content mismatch: expected {} bytes, got {} bytes",
+                bucket,
+                key,
+                expected.len(),
+                bytes.len()
+            ))),
+            Err(e) => Err(TestHarnessError::AssertionFailed(format!(
+                "Failed to read object {}/{}: {}",
+                bucket, key, e
+            ))),
+        },
         Ok(response) => Err(TestHarnessError::AssertionFailed(format!(
             "Object {}/{} does not exist: status {}",
             bucket,
@@ -88,13 +82,10 @@ pub async fn assert_object_not_exists(
         Ok(response) if response.status().as_u16() == 404 => {
             debug!("Object {}/{} does not exist (as expected)", bucket, key);
             Ok(())
-        }
-        Ok(response) if response.status().is_success() => {
-            Err(TestHarnessError::AssertionFailed(format!(
-                "Object {}/{} exists but should not",
-                bucket, key
-            )))
-        }
+        },
+        Ok(response) if response.status().is_success() => Err(TestHarnessError::AssertionFailed(
+            format!("Object {}/{} exists but should not", bucket, key),
+        )),
         Ok(response) => Err(TestHarnessError::AssertionFailed(format!(
             "Unexpected status checking object {}/{}: {}",
             bucket,
@@ -117,7 +108,7 @@ pub async fn assert_bucket_exists(cluster: &TestCluster, bucket: &str) -> Result
         Ok(response) if response.status().is_success() => {
             debug!("Bucket {} exists", bucket);
             Ok(())
-        }
+        },
         Ok(response) => Err(TestHarnessError::AssertionFailed(format!(
             "Bucket {} does not exist: status {}",
             bucket,
@@ -141,21 +132,21 @@ pub async fn assert_cluster_healthy(cluster: &TestCluster) -> Result<()> {
         match client.get(&url).send().await {
             Ok(response) if response.status().is_success() => {
                 debug!("Node {} is healthy", node.id());
-            }
+            },
             Ok(response) => {
                 return Err(TestHarnessError::AssertionFailed(format!(
                     "Node {} is unhealthy: status {}",
                     node.id(),
                     response.status()
                 )));
-            }
+            },
             Err(e) => {
                 return Err(TestHarnessError::AssertionFailed(format!(
                     "Failed to check health of node {}: {}",
                     node.id(),
                     e
                 )));
-            }
+            },
         }
     }
 
@@ -184,8 +175,8 @@ pub async fn assert_data_replicated(
         match client.get(&url).send().await {
             Ok(response) if response.status().is_success() => {
                 replica_count += 1;
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -204,7 +195,10 @@ pub async fn assert_data_replicated(
 }
 
 /// Wait for a leader to be elected and return the leader ID
-pub async fn assert_leader_elected(cluster: &TestCluster, timeout: Duration) -> Result<crate::NodeId> {
+pub async fn assert_leader_elected(
+    cluster: &TestCluster,
+    timeout: Duration,
+) -> Result<crate::NodeId> {
     cluster.wait_for_leader(timeout).await
 }
 
@@ -263,7 +257,9 @@ where
 }
 
 /// Assert that no errors occurred during operation
-pub async fn assert_no_errors<T, E: std::fmt::Display>(result: std::result::Result<T, E>) -> Result<T> {
+pub async fn assert_no_errors<T, E: std::fmt::Display>(
+    result: std::result::Result<T, E>,
+) -> Result<T> {
     result.map_err(|e| TestHarnessError::AssertionFailed(format!("Operation failed: {}", e)))
 }
 
@@ -286,13 +282,11 @@ where
             Err(e) => {
                 last_error = Some(e);
                 sleep(retry_interval).await;
-            }
+            },
         }
     }
 
-    Err(last_error.unwrap_or_else(|| {
-        TestHarnessError::Timeout("Operation timed out".to_string())
-    }))
+    Err(last_error.unwrap_or_else(|| TestHarnessError::Timeout("Operation timed out".to_string())))
 }
 
 #[cfg(test)]

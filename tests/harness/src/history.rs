@@ -66,9 +66,8 @@ impl HistoryEntry {
 
     /// Get the operation duration if completed
     pub fn duration(&self) -> Option<Duration> {
-        self.complete_time.and_then(|complete| {
-            complete.duration_since(self.invoke_time).ok()
-        })
+        self.complete_time
+            .and_then(|complete| complete.duration_since(self.invoke_time).ok())
     }
 
     /// Check if the operation is complete
@@ -100,7 +99,9 @@ impl OperationHistory {
 
     /// Record a new operation invocation
     pub async fn record_invoke(&self, operation: Operation) -> u64 {
-        let id = self.next_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let entry = HistoryEntry::new(id, operation);
         self.entries.lock().await.push(entry);
         id
@@ -167,10 +168,7 @@ impl OperationHistory {
         let successful = entries.iter().filter(|e| e.is_success()).count();
         let failed = completed - successful;
 
-        let durations: Vec<Duration> = entries
-            .iter()
-            .filter_map(|e| e.duration())
-            .collect();
+        let durations: Vec<Duration> = entries.iter().filter_map(|e| e.duration()).collect();
 
         let avg_duration = if !durations.is_empty() {
             Some(durations.iter().sum::<Duration>() / durations.len() as u32)
@@ -235,7 +233,9 @@ mod tests {
         let id = history.record_invoke(op).await;
         assert_eq!(id, 0);
 
-        history.record_complete(id, OperationResult::Ok(OperationValue::Unit)).await;
+        history
+            .record_complete(id, OperationResult::Ok(OperationValue::Unit))
+            .await;
 
         let entries = history.get_entries().await;
         assert_eq!(entries.len(), 1);
@@ -255,15 +255,13 @@ mod tests {
             let id = history.record_invoke(op).await;
 
             if i % 2 == 0 {
-                history.record_complete(
-                    id,
-                    OperationResult::Ok(OperationValue::Data(vec![i as u8])),
-                ).await;
+                history
+                    .record_complete(id, OperationResult::Ok(OperationValue::Data(vec![i as u8])))
+                    .await;
             } else {
-                history.record_complete(
-                    id,
-                    OperationResult::Err("not found".to_string()),
-                ).await;
+                history
+                    .record_complete(id, OperationResult::Err("not found".to_string()))
+                    .await;
             }
         }
 
@@ -285,7 +283,9 @@ mod tests {
         };
 
         let id = history.record_invoke(op).await;
-        history.record_complete(id, OperationResult::Ok(OperationValue::Unit)).await;
+        history
+            .record_complete(id, OperationResult::Ok(OperationValue::Unit))
+            .await;
 
         let json = history.export_json().await.unwrap();
 

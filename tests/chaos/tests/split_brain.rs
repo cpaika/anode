@@ -33,8 +33,15 @@ async fn test_split_brain_prevention() {
     cluster.stop().await.ok();
 
     let result = result.expect("Scenario failed");
-    assert!(result.success, "Split-brain scenario failed: {:?}", result.error);
-    assert!(result.integrity_verified, "Data integrity verification failed");
+    assert!(
+        result.success,
+        "Split-brain scenario failed: {:?}",
+        result.error
+    );
+    assert!(
+        result.integrity_verified,
+        "Data integrity verification failed"
+    );
 }
 
 #[tokio::test]
@@ -62,5 +69,9 @@ async fn test_flapping_partition() {
     cluster.stop().await.ok();
 
     let result = result.expect("Scenario failed");
-    assert!(result.success, "Flapping partition scenario failed: {:?}", result.error);
+    assert!(
+        result.success,
+        "Flapping partition scenario failed: {:?}",
+        result.error
+    );
 }

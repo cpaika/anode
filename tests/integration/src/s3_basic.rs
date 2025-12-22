@@ -8,8 +8,8 @@
 //! - Object copying
 
 use crate::{
-    setup_cluster, create_test_s3_client, random_bytes, unique_bucket_name,
-    unique_object_key, cleanup_bucket, BucketFixture, get_shared_cluster,
+    create_test_s3_client, random_bytes, setup_cluster, unique_bucket_name, unique_object_key,
+    BucketFixture,
 };
 use aws_sdk_s3::primitives::ByteStream;
 use bytes::Bytes;
@@ -24,27 +24,23 @@ async fn test_create_and_delete_bucket() {
     let bucket = unique_bucket_name("test-bucket");
 
     // Create bucket
-    let create_result = client
-        .create_bucket()
-        .bucket(&bucket)
-        .send()
-        .await;
-    assert!(create_result.is_ok(), "Failed to create bucket: {:?}", create_result.err());
+    let create_result = client.create_bucket().bucket(&bucket).send().await;
+    assert!(
+        create_result.is_ok(),
+        "Failed to create bucket: {:?}",
+        create_result.err()
+    );
 
     // Verify bucket exists with head_bucket
-    let head_result = client
-        .head_bucket()
-        .bucket(&bucket)
-        .send()
-        .await;
-    assert!(head_result.is_ok(), "Bucket should exist: {:?}", head_result.err());
+    let head_result = client.head_bucket().bucket(&bucket).send().await;
+    assert!(
+        head_result.is_ok(),
+        "Bucket should exist: {:?}",
+        head_result.err()
+    );
 
     // Verify bucket appears in list
-    let list_result = client
-        .list_buckets()
-        .send()
-        .await
-        .unwrap();
+    let list_result = client.list_buckets().send().await.unwrap();
     let bucket_names: Vec<String> = list_result
         .buckets()
         .iter()
@@ -57,20 +53,19 @@ async fn test_create_and_delete_bucket() {
     );
 
     // Delete bucket
-    let delete_result = client
-        .delete_bucket()
-        .bucket(&bucket)
-        .send()
-        .await;
-    assert!(delete_result.is_ok(), "Failed to delete bucket: {:?}", delete_result.err());
+    let delete_result = client.delete_bucket().bucket(&bucket).send().await;
+    assert!(
+        delete_result.is_ok(),
+        "Failed to delete bucket: {:?}",
+        delete_result.err()
+    );
 
     // Verify bucket is gone
-    let head_result = client
-        .head_bucket()
-        .bucket(&bucket)
-        .send()
-        .await;
-    assert!(head_result.is_err(), "Bucket should not exist after deletion");
+    let head_result = client.head_bucket().bucket(&bucket).send().await;
+    assert!(
+        head_result.is_err(),
+        "Bucket should not exist after deletion"
+    );
 }
 
 #[tokio::test]
@@ -83,17 +78,23 @@ async fn test_put_get_object() {
     let data = random_bytes(1024);
 
     // Put object
-    let put_result = fixture.client
+    let put_result = fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(&key)
         .body(ByteStream::from(Bytes::from(data.clone())))
         .send()
         .await;
-    assert!(put_result.is_ok(), "Failed to put object: {:?}", put_result.err());
+    assert!(
+        put_result.is_ok(),
+        "Failed to put object: {:?}",
+        put_result.err()
+    );
 
     // Get object
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -124,7 +125,8 @@ async fn test_list_objects() {
     // Create multiple objects
     let keys = vec!["obj-1", "obj-2", "obj-3", "prefix/obj-4"];
     for key in &keys {
-        fixture.client
+        fixture
+            .client
             .put_object()
             .bucket(&fixture.bucket)
             .key(*key)
@@ -135,7 +137,8 @@ async fn test_list_objects() {
     }
 
     // List all objects
-    let list_result = fixture.client
+    let list_result = fixture
+        .client
         .list_objects_v2()
         .bucket(&fixture.bucket)
         .send()
@@ -158,7 +161,8 @@ async fn test_list_objects() {
     }
 
     // List with prefix
-    let list_result = fixture.client
+    let list_result = fixture
+        .client
         .list_objects_v2()
         .bucket(&fixture.bucket)
         .prefix("prefix/")
@@ -185,7 +189,8 @@ async fn test_delete_objects_batch() {
     // Create multiple objects
     let keys = vec!["obj-1", "obj-2", "obj-3"];
     for key in &keys {
-        fixture.client
+        fixture
+            .client
             .put_object()
             .bucket(&fixture.bucket)
             .key(*key)
@@ -197,7 +202,8 @@ async fn test_delete_objects_batch() {
 
     // Delete objects one by one
     for key in &keys {
-        let delete_result = fixture.client
+        let delete_result = fixture
+            .client
             .delete_object()
             .bucket(&fixture.bucket)
             .key(*key)
@@ -207,7 +213,8 @@ async fn test_delete_objects_batch() {
     }
 
     // Verify all objects are deleted
-    let list_result = fixture.client
+    let list_result = fixture
+        .client
         .list_objects_v2()
         .bucket(&fixture.bucket)
         .send()
@@ -232,7 +239,8 @@ async fn test_copy_object() {
     let data = random_bytes(1024);
 
     // Put source object
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(&source_key)
@@ -243,17 +251,23 @@ async fn test_copy_object() {
 
     // Copy object
     let copy_source = format!("{}/{}", fixture.bucket, source_key);
-    let copy_result = fixture.client
+    let copy_result = fixture
+        .client
         .copy_object()
         .bucket(&fixture.bucket)
         .key(&dest_key)
         .copy_source(&copy_source)
         .send()
         .await;
-    assert!(copy_result.is_ok(), "Failed to copy object: {:?}", copy_result.err());
+    assert!(
+        copy_result.is_ok(),
+        "Failed to copy object: {:?}",
+        copy_result.err()
+    );
 
     // Verify destination object
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(&dest_key)
@@ -282,7 +296,8 @@ async fn test_object_metadata() {
     let data = random_bytes(1024);
 
     // Put object with metadata
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -294,7 +309,8 @@ async fn test_object_metadata() {
         .unwrap();
 
     // Get object metadata with head_object
-    let head_result = fixture.client
+    let head_result = fixture
+        .client
         .head_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -303,13 +319,16 @@ async fn test_object_metadata() {
         .unwrap();
 
     assert_eq!(head_result.content_length(), Some(1024));
+    assert_eq!(head_result.content_type(), Some("application/octet-stream"));
+    assert!(head_result
+        .metadata()
+        .map(|m| m.contains_key("custom-key"))
+        .unwrap_or(false));
     assert_eq!(
-        head_result.content_type(),
-        Some("application/octet-stream")
-    );
-    assert!(head_result.metadata().contains_key("custom-key"));
-    assert_eq!(
-        head_result.metadata().get("custom-key").map(|s| s.as_str()),
+        head_result
+            .metadata()
+            .and_then(|m| m.get("custom-key"))
+            .map(|s| s.as_str()),
         Some("custom-value")
     );
 }
@@ -324,7 +343,8 @@ async fn test_range_get() {
     let data = random_bytes(1024);
 
     // Put object
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -334,7 +354,8 @@ async fn test_range_get() {
         .unwrap();
 
     // Get range of bytes (bytes 100-199)
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -342,6 +363,9 @@ async fn test_range_get() {
         .send()
         .await
         .unwrap();
+
+    // Verify content range header before consuming body
+    let content_range = get_result.content_range().map(|s| s.to_string());
 
     let retrieved_data = get_result
         .body
@@ -352,17 +376,10 @@ async fn test_range_get() {
         .to_vec();
 
     assert_eq!(retrieved_data.len(), 100, "Should retrieve 100 bytes");
-    assert_eq!(
-        retrieved_data,
-        &data[100..200],
-        "Range data should match"
-    );
+    assert_eq!(retrieved_data, &data[100..200], "Range data should match");
 
     // Verify content range header
-    assert_eq!(
-        get_result.content_range(),
-        Some("bytes 100-199/1024")
-    );
+    assert_eq!(content_range.as_deref(), Some("bytes 100-199/1024"));
 }
 
 #[tokio::test]
@@ -375,7 +392,8 @@ async fn test_conditional_get() {
     let data = random_bytes(1024);
 
     // Put object
-    let put_result = fixture.client
+    let put_result = fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -387,7 +405,8 @@ async fn test_conditional_get() {
     let etag = put_result.e_tag().unwrap().to_string();
 
     // Get with matching ETag (should succeed)
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -397,7 +416,8 @@ async fn test_conditional_get() {
     assert!(get_result.is_ok(), "Get with matching ETag should succeed");
 
     // Get with non-matching ETag (should fail with precondition failed)
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -407,14 +427,18 @@ async fn test_conditional_get() {
     assert!(get_result.is_err(), "Get with wrong ETag should fail");
 
     // Get with if-none-match (should return 304 Not Modified)
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(&key)
         .if_none_match(&etag)
         .send()
         .await;
-    assert!(get_result.is_err(), "Get with matching if-none-match should return 304");
+    assert!(
+        get_result.is_err(),
+        "Get with matching if-none-match should return 304"
+    );
 }
 
 #[tokio::test]
@@ -427,7 +451,8 @@ async fn test_head_object() {
     let data = random_bytes(2048);
 
     // Put object
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -437,7 +462,8 @@ async fn test_head_object() {
         .unwrap();
 
     // Head object
-    let head_result = fixture.client
+    let head_result = fixture
+        .client
         .head_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -460,7 +486,8 @@ async fn test_object_overwrite() {
 
     // Put object v1
     let data_v1 = random_bytes(512);
-    let put_result_v1 = fixture.client
+    let put_result_v1 = fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -472,7 +499,8 @@ async fn test_object_overwrite() {
 
     // Put object v2 (overwrite)
     let data_v2 = random_bytes(1024);
-    let put_result_v2 = fixture.client
+    let put_result_v2 = fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -486,7 +514,70 @@ async fn test_object_overwrite() {
     assert_ne!(etag_v1, etag_v2, "ETags should differ after overwrite");
 
     // Get object should return v2
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
+        .get_object()
+        .bucket(&fixture.bucket)
+        .key(&key)
+        .send()
+        .await
+        .unwrap();
+
+    let retrieved_data = get_result
+        .body
+        .collect()
+        .await
+        .unwrap()
+        .into_bytes()
+        .to_vec();
+
+    assert_eq!(retrieved_data, data_v2, "Retrieved data should be v2");
+}
+
+#[tokio::test]
+#[serial]
+async fn test_delete_nonexistent_object() {
+    let cluster = setup_cluster(3).await.unwrap();
+    let fixture = BucketFixture::new(&cluster, "test-delete-missing").await;
+
+    let key = unique_object_key("nonexistent");
+
+    // Delete should succeed even if object doesn't exist (S3 behavior)
+    let delete_result = fixture
+        .client
+        .delete_object()
+        .bucket(&fixture.bucket)
+        .key(&key)
+        .send()
+        .await;
+    assert!(
+        delete_result.is_ok(),
+        "Delete of nonexistent object should succeed"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn test_empty_object() {
+    let cluster = setup_cluster(3).await.unwrap();
+    let fixture = BucketFixture::new(&cluster, "test-empty").await;
+
+    let key = unique_object_key("empty-object");
+
+    // Put empty object
+    fixture
+        .client
+        .put_object()
+        .bucket(&fixture.bucket)
+        .key(&key)
+        .body(ByteStream::from(Bytes::from_static(b"")))
+        .send()
+        .await
+        .unwrap();
+
+    // Get empty object
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -503,63 +594,8 @@ async fn test_object_overwrite() {
         .to_vec();
 
     assert_eq!(
-        retrieved_data, data_v2,
-        "Retrieved data should be v2"
+        retrieved_data.len(),
+        0,
+        "Empty object should have zero bytes"
     );
-}
-
-#[tokio::test]
-#[serial]
-async fn test_delete_nonexistent_object() {
-    let cluster = setup_cluster(3).await.unwrap();
-    let fixture = BucketFixture::new(&cluster, "test-delete-missing").await;
-
-    let key = unique_object_key("nonexistent");
-
-    // Delete should succeed even if object doesn't exist (S3 behavior)
-    let delete_result = fixture.client
-        .delete_object()
-        .bucket(&fixture.bucket)
-        .key(&key)
-        .send()
-        .await;
-    assert!(delete_result.is_ok(), "Delete of nonexistent object should succeed");
-}
-
-#[tokio::test]
-#[serial]
-async fn test_empty_object() {
-    let cluster = setup_cluster(3).await.unwrap();
-    let fixture = BucketFixture::new(&cluster, "test-empty").await;
-
-    let key = unique_object_key("empty-object");
-
-    // Put empty object
-    fixture.client
-        .put_object()
-        .bucket(&fixture.bucket)
-        .key(&key)
-        .body(ByteStream::from(Bytes::from_static(b"")))
-        .send()
-        .await
-        .unwrap();
-
-    // Get empty object
-    let get_result = fixture.client
-        .get_object()
-        .bucket(&fixture.bucket)
-        .key(&key)
-        .send()
-        .await
-        .unwrap();
-
-    let retrieved_data = get_result
-        .body
-        .collect()
-        .await
-        .unwrap()
-        .into_bytes()
-        .to_vec();
-
-    assert_eq!(retrieved_data.len(), 0, "Empty object should have zero bytes");
 }

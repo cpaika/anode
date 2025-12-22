@@ -2,11 +2,7 @@
 //!
 //! Tests system behavior during rolling restarts
 
-use anode_test_harness::{
-    assertions::*,
-    cluster::TestCluster,
-    chaos::ChaosScenarios,
-};
+use anode_test_harness::{assertions::*, chaos::ChaosScenarios, cluster::TestCluster};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -34,7 +30,9 @@ async fn test_basic_rolling_restart() {
     sleep(Duration::from_secs(5)).await;
 
     // Data should still be accessible
-    assert_object_content(&cluster, bucket, key, value).await.unwrap();
+    assert_object_content(&cluster, bucket, key, value)
+        .await
+        .unwrap();
 
     cluster.stop().await.unwrap();
 }
@@ -65,8 +63,8 @@ async fn test_rolling_restart_with_writes() {
                 match client.put(&url).body(value).send().await {
                     Ok(response) if response.status().is_success() => {
                         successful_writes.push(key);
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
 
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -118,10 +116,7 @@ async fn test_fast_rolling_restart() {
     }
 
     // Fast rolling restart (1 second intervals)
-    let scheduler = ChaosScenarios::rolling_restart(
-        cluster.num_nodes(),
-        Duration::from_secs(1),
-    );
+    let scheduler = ChaosScenarios::rolling_restart(cluster.num_nodes(), Duration::from_secs(1));
     scheduler.run(&mut cluster).await.unwrap();
 
     // Wait for cluster to stabilize
@@ -143,7 +138,10 @@ async fn test_rolling_restart_leader_change() {
     cluster.start().await.unwrap();
 
     // Record initial leader
-    let initial_leader = cluster.wait_for_leader(Duration::from_secs(10)).await.unwrap();
+    let initial_leader = cluster
+        .wait_for_leader(Duration::from_secs(10))
+        .await
+        .unwrap();
 
     // Perform rolling restart
     for i in 0..cluster.num_nodes() {
@@ -158,9 +156,15 @@ async fn test_rolling_restart_leader_change() {
     sleep(Duration::from_secs(5)).await;
 
     // A leader should still be elected
-    let final_leader = cluster.wait_for_leader(Duration::from_secs(10)).await.unwrap();
+    let final_leader = cluster
+        .wait_for_leader(Duration::from_secs(10))
+        .await
+        .unwrap();
 
-    println!("Initial leader: {}, Final leader: {}", initial_leader, final_leader);
+    println!(
+        "Initial leader: {}, Final leader: {}",
+        initial_leader, final_leader
+    );
 
     cluster.stop().await.unwrap();
 }
@@ -201,6 +205,187 @@ async fn test_overlapping_rolling_restart() {
 
     // Data should still be accessible
     assert_object_exists(&cluster, bucket, key).await.unwrap();
+
+    cluster.stop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_rolling_restart_zero_data_loss() {
+    use anode_chaos_tests::verification::DataVerifier;
+
+    // Create a 5-node cluster for robust testing
+    let mut cluster = TestCluster::new(5).await.unwrap();
+    cluster.start().await.unwrap();
+
+    // Wait for cluster to stabilize
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    let mut verifier = DataVerifier::new(cluster.get_s3_endpoint());
+
+    // Phase 1: Write initial dataset before rolling restart
+    println!("Phase 1: Writing initial dataset...");
+    for i in 0..20 {
+        let bucket = "rolling-restart-zero-loss-test";
+        let key = format!("pre-restart-{:03}", i);
+        let data = format!("initial-data-{}", i).repeat(50).into_bytes();
+
+        verifier
+            .write_and_track(bucket, &key, data)
+            .await
+            .expect("Failed to write initial data");
+    }
+    println!("Wrote 20 objects before restart");
+
+    // Wait for replication to complete
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Phase 2: Perform rolling restart while writing data
+    println!("\nPhase 2: Starting rolling restart with concurrent writes...");
+
+    let num_nodes = cluster.num_nodes();
+    let restart_interval = Duration::from_secs(5);
+
+    for node_idx in 0..num_nodes {
+        println!("  Restarting node {} of {}", node_idx + 1, num_nodes);
+
+        // Write data before restarting this node
+        for j in 0..3 {
+            let key = format!("during-restart-node-{}-write-{}", node_idx, j);
+            let data = format!("data-during-restart-{}-{}", node_idx, j).into_bytes();
+
+            match verifier
+                .write_and_track("rolling-restart-zero-loss-test", &key, data)
+                .await
+            {
+                Ok(_) => {},
+                Err(e) => {
+                    println!(
+                        "  Warning: Write failed before restarting node {}: {}",
+                        node_idx, e
+                    );
+                },
+            }
+        }
+
+        // Restart the node
+        cluster
+            .restart_node(node_idx)
+            .await
+            .expect("Failed to restart node");
+
+        // Wait for node to come back up
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        // Write data after restarting this node to verify cluster is operational
+        for j in 0..2 {
+            let key = format!("post-restart-node-{}-write-{}", node_idx, j);
+            let data = format!("data-post-restart-{}-{}", node_idx, j).into_bytes();
+
+            match verifier
+                .write_and_track("rolling-restart-zero-loss-test", &key, data)
+                .await
+            {
+                Ok(_) => {},
+                Err(e) => {
+                    println!(
+                        "  Warning: Write failed after restarting node {}: {}",
+                        node_idx, e
+                    );
+                },
+            }
+        }
+
+        // Wait before restarting next node to maintain quorum
+        if node_idx < num_nodes - 1 {
+            tokio::time::sleep(restart_interval).await;
+        }
+    }
+
+    println!("Rolling restart completed");
+
+    // Phase 3: Wait for cluster to fully stabilize
+    println!("\nPhase 3: Waiting for cluster to stabilize...");
+    tokio::time::sleep(Duration::from_secs(10)).await;
+
+    // Ensure leader is elected
+    let leader = cluster
+        .wait_for_leader(Duration::from_secs(30))
+        .await
+        .expect("Failed to elect leader after rolling restart");
+    println!("Leader elected: node {}", leader);
+
+    // Phase 4: Write post-restart data
+    println!("\nPhase 4: Writing post-restart dataset...");
+    for i in 0..15 {
+        let key = format!("post-restart-{:03}", i);
+        let data = format!("final-data-{}", i).into_bytes();
+
+        verifier
+            .write_and_track("rolling-restart-zero-loss-test", &key, data)
+            .await
+            .expect("Failed to write post-restart data");
+    }
+    println!("Wrote 15 objects after restart");
+
+    // Phase 5: Verify zero data loss
+    println!("\nPhase 5: Verifying data integrity...");
+    let total_tracked = verifier.tracked_count();
+    println!("Total objects tracked: {}", total_tracked);
+
+    let verification_result = verifier
+        .get_verification_results()
+        .await
+        .expect("Failed to get verification results");
+
+    println!("\n=== Verification Results ===");
+    println!("Total objects:    {}", verification_result.total_objects);
+    println!("Verified objects: {}", verification_result.verified_objects);
+    println!(
+        "Missing objects:  {}",
+        verification_result.missing_objects.len()
+    );
+    println!(
+        "Corrupted objects: {}",
+        verification_result.corrupted_objects.len()
+    );
+
+    if !verification_result.missing_objects.is_empty() {
+        println!("\nMissing objects:");
+        for obj in &verification_result.missing_objects {
+            println!("  - {}", obj);
+        }
+    }
+
+    if !verification_result.corrupted_objects.is_empty() {
+        println!("\nCorrupted objects:");
+        for obj in &verification_result.corrupted_objects {
+            println!("  - {}", obj);
+        }
+    }
+
+    // Assert zero data loss
+    assert_eq!(
+        verification_result.missing_objects.len(),
+        0,
+        "Zero data loss test failed: {} objects missing",
+        verification_result.missing_objects.len()
+    );
+    assert_eq!(
+        verification_result.corrupted_objects.len(),
+        0,
+        "Zero data loss test failed: {} objects corrupted",
+        verification_result.corrupted_objects.len()
+    );
+    assert_eq!(
+        verification_result.verified_objects, verification_result.total_objects,
+        "All objects should be verified"
+    );
+
+    println!(
+        "\n✓ Zero data loss verified: all {} objects intact after rolling restart",
+        verification_result.total_objects
+    );
 
     cluster.stop().await.unwrap();
 }

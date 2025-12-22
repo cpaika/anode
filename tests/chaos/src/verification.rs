@@ -3,9 +3,8 @@
 //! Tracks written data and verifies integrity after chaos events.
 
 use crate::{ChaosError, Result};
-use bytes::Bytes;
 use reqwest::Client;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, info};
 
@@ -24,13 +23,15 @@ impl VerificationResult {
     }
 }
 
+type WrittenObjects = BTreeMap<(String, String), Vec<u8>>;
+
 /// Data verifier that tracks writes and verifies reads
 #[derive(Clone)]
 pub struct DataVerifier {
     endpoint: String,
     client: Client,
     // Track written objects: (bucket, key) -> data
-    written_objects: Arc<Mutex<HashMap<(String, String), Vec<u8>>>>,
+    written_objects: Arc<Mutex<WrittenObjects>>,
 }
 
 impl DataVerifier {
@@ -39,17 +40,12 @@ impl DataVerifier {
         Self {
             endpoint,
             client: Client::new(),
-            written_objects: Arc::new(Mutex::new(HashMap::new())),
+            written_objects: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
     /// Write data and track it for later verification
-    pub async fn write_and_track(
-        &mut self,
-        bucket: &str,
-        key: &str,
-        data: Vec<u8>,
-    ) -> Result<()> {
+    pub async fn write_and_track(&mut self, bucket: &str, key: &str, data: Vec<u8>) -> Result<()> {
         // First ensure bucket exists
         self.ensure_bucket_exists(bucket).await?;
 
@@ -75,15 +71,11 @@ impl DataVerifier {
     }
 
     /// Verify a specific object matches expected data
-    pub async fn verify_read(
-        &self,
-        bucket: &str,
-        key: &str,
-        expected_data: &[u8],
-    ) -> Result<bool> {
+    pub async fn verify_read(&self, bucket: &str, key: &str, expected_data: &[u8]) -> Result<bool> {
         let url = format!("{}/{}/{}", self.endpoint, bucket, key);
 
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .send()
             .await
@@ -105,11 +97,10 @@ impl DataVerifier {
     pub async fn verify_exists(&self, bucket: &str, key: &str) -> Result<bool> {
         let url = format!("{}/{}/{}", self.endpoint, bucket, key);
 
-        let response = self.client
-            .head(&url)
-            .send()
-            .await
-            .map_err(|e| ChaosError::VerificationFailed(format!("HEAD request failed: {}", e)))?;
+        let response =
+            self.client.head(&url).send().await.map_err(|e| {
+                ChaosError::VerificationFailed(format!("HEAD request failed: {}", e))
+            })?;
 
         Ok(response.status().is_success())
     }
@@ -126,15 +117,15 @@ impl DataVerifier {
             match self.verify_read(bucket, key, expected_data).await {
                 Ok(true) => {
                     debug!("Verified {}/{}", bucket, key);
-                }
+                },
                 Ok(false) => {
                     info!("Verification failed for {}/{}", bucket, key);
                     all_verified = false;
-                }
+                },
                 Err(e) => {
                     info!("Error verifying {}/{}: {}", bucket, key, e);
                     all_verified = false;
-                }
+                },
             }
         }
 
@@ -163,26 +154,26 @@ impl DataVerifier {
                 Ok(false) => {
                     missing_objects.push(object_path);
                     continue;
-                }
+                },
                 Err(e) => {
                     info!("Error checking existence of {}: {}", object_path, e);
                     missing_objects.push(object_path);
                     continue;
-                }
-                _ => {}
+                },
+                _ => {},
             }
 
             match self.verify_read(bucket, key, expected_data).await {
                 Ok(true) => {
                     verified_objects += 1;
-                }
+                },
                 Ok(false) => {
                     corrupted_objects.push(object_path);
-                }
+                },
                 Err(e) => {
                     info!("Error reading {}: {}", object_path, e);
                     corrupted_objects.push(object_path);
-                }
+                },
             }
         }
 
@@ -215,14 +206,12 @@ impl DataVerifier {
             Ok(resp) if resp.status().is_success() => {
                 // Bucket exists
                 Ok(())
-            }
+            },
             _ => {
                 // Bucket doesn't exist, try to create it
-                let create_response = self.client
-                    .put(&url)
-                    .send()
-                    .await
-                    .map_err(|e| ChaosError::VerificationFailed(format!("Failed to create bucket: {}", e)))?;
+                let create_response = self.client.put(&url).send().await.map_err(|e| {
+                    ChaosError::VerificationFailed(format!("Failed to create bucket: {}", e))
+                })?;
 
                 if create_response.status().is_success() {
                     debug!("Created bucket {}", bucket);
@@ -233,7 +222,7 @@ impl DataVerifier {
                         create_response.status()
                     )))
                 }
-            }
+            },
         }
     }
 }

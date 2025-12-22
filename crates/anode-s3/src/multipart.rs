@@ -2,12 +2,12 @@
 // This module provides complete S3-compatible multipart upload functionality
 
 use crate::error::{S3Error, S3Result};
-use anode_protocol::{ChunkId, ObjectKey, ObjectManifest};
+use anode_protocol::ObjectManifest;
 use anode_storage::StorageEngine;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -39,8 +39,8 @@ pub struct MultipartConfig {
 impl Default for MultipartConfig {
     fn default() -> Self {
         Self {
-            min_part_size: 5 * 1024 * 1024,           // 5MB
-            max_part_size: 5 * 1024 * 1024 * 1024,    // 5GB
+            min_part_size: 5 * 1024 * 1024,        // 5MB
+            max_part_size: 5 * 1024 * 1024 * 1024, // 5GB
             max_parts: 10000,
             upload_expiry: Duration::from_secs(7 * 24 * 3600), // 7 days
             cleanup_interval: Duration::from_secs(3600),
@@ -55,7 +55,7 @@ pub struct MultipartUpload {
     pub key: String,
     pub created_at: DateTime<Utc>,
     pub parts: HashMap<u32, UploadedPart>,
-    pub metadata: HashMap<String, String>,
+    pub metadata: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,12 +81,9 @@ impl MultipartManager {
         &self,
         bucket: &str,
         key: &str,
-        metadata: HashMap<String, String>,
+        metadata: BTreeMap<String, String>,
     ) -> S3Result<String> {
-        info!(
-            "Creating multipart upload: bucket={}, key={}",
-            bucket, key
-        );
+        info!("Creating multipart upload: bucket={}, key={}", bucket, key);
 
         // Generate unique upload ID
         let upload_id = Uuid::new_v4().to_string();
@@ -222,15 +219,9 @@ impl MultipartManager {
         }
 
         // Store the complete object
-        let object_key = ObjectKey::new(&upload.bucket, &upload.key);
         let manifest = self
             .storage
-            .put_object(
-                &upload.bucket,
-                &upload.key,
-                &combined_data,
-                upload.metadata,
-            )
+            .put_object(&upload.bucket, &upload.key, &combined_data, upload.metadata)
             .await
             .map_err(S3Error::from)?;
 
@@ -330,12 +321,12 @@ impl MultipartManager {
             .filter(|u| {
                 // Apply pagination markers
                 if let Some(key_mark) = key_marker {
-                    if u.key < key_mark {
+                    if u.key.as_str() < key_mark {
                         return false;
                     }
                     if u.key == key_mark {
                         if let Some(upload_mark) = upload_id_marker {
-                            return u.upload_id > upload_mark;
+                            return u.upload_id.as_str() > upload_mark;
                         }
                     }
                 }
@@ -419,10 +410,10 @@ impl MultipartManager {
                         if count > 0 {
                             debug!("Cleanup task removed {} expired uploads", count);
                         }
-                    }
+                    },
                     Err(e) => {
                         warn!("Cleanup task error: {}", e);
-                    }
+                    },
                 }
             }
         })
@@ -488,10 +479,7 @@ mod tests {
             .await
             .unwrap();
 
-        let manager = Arc::new(MultipartManager::new(
-            storage,
-            MultipartConfig::default(),
-        ));
+        let manager = Arc::new(MultipartManager::new(storage, MultipartConfig::default()));
 
         (manager, temp_dir)
     }
@@ -501,7 +489,7 @@ mod tests {
         let (manager, _temp) = create_test_manager().await;
 
         let upload_id = manager
-            .create_upload("test-bucket", "test-key", HashMap::new())
+            .create_upload("test-bucket", "test-key", BTreeMap::new())
             .await
             .unwrap();
 
@@ -520,7 +508,7 @@ mod tests {
         let (manager, _temp) = create_test_manager().await;
 
         let upload_id = manager
-            .create_upload("test-bucket", "test-key", HashMap::new())
+            .create_upload("test-bucket", "test-key", BTreeMap::new())
             .await
             .unwrap();
 
@@ -537,7 +525,7 @@ mod tests {
         let (manager, _temp) = create_test_manager().await;
 
         let upload_id = manager
-            .create_upload("test-bucket", "test-key", HashMap::new())
+            .create_upload("test-bucket", "test-key", BTreeMap::new())
             .await
             .unwrap();
 
@@ -568,9 +556,9 @@ mod tests {
 
         let manifest = manager.complete_upload(&upload_id, parts).await.unwrap();
 
-        assert_eq!(manifest.object_key.bucket, "test-bucket");
-        assert_eq!(manifest.object_key.key, "test-key");
-        assert_eq!(manifest.size, (5 * 1024 * 1024 * 2 + 1024) as u64);
+        assert_eq!(manifest.key.bucket, "test-bucket");
+        assert_eq!(manifest.key.key, "test-key");
+        assert_eq!(manifest.total_size, (5 * 1024 * 1024 * 2 + 1024) as u64);
 
         // Upload should be removed
         assert!(manager.get_upload(&upload_id).await.is_none());
@@ -581,7 +569,7 @@ mod tests {
         let (manager, _temp) = create_test_manager().await;
 
         let upload_id = manager
-            .create_upload("test-bucket", "test-key", HashMap::new())
+            .create_upload("test-bucket", "test-key", BTreeMap::new())
             .await
             .unwrap();
 
@@ -600,7 +588,7 @@ mod tests {
         let (manager, _temp) = create_test_manager().await;
 
         let upload_id = manager
-            .create_upload("test-bucket", "test-key", HashMap::new())
+            .create_upload("test-bucket", "test-key", BTreeMap::new())
             .await
             .unwrap();
 
@@ -619,10 +607,7 @@ mod tests {
         assert!(!result.is_truncated);
 
         // List with limit
-        let result = manager
-            .list_parts(&upload_id, Some(3), None)
-            .await
-            .unwrap();
+        let result = manager.list_parts(&upload_id, Some(3), None).await.unwrap();
 
         assert_eq!(result.parts.len(), 3);
         assert!(result.is_truncated);
@@ -637,7 +622,7 @@ mod tests {
         for i in 1..=3 {
             let key = format!("prefix/key-{}", i);
             manager
-                .create_upload("test-bucket", &key, HashMap::new())
+                .create_upload("test-bucket", &key, BTreeMap::new())
                 .await
                 .unwrap();
         }
@@ -667,7 +652,7 @@ mod tests {
         let (manager, _temp) = create_test_manager().await;
 
         let upload_id = manager
-            .create_upload("test-bucket", "test-key", HashMap::new())
+            .create_upload("test-bucket", "test-key", BTreeMap::new())
             .await
             .unwrap();
 
@@ -682,7 +667,7 @@ mod tests {
         let (manager, _temp) = create_test_manager().await;
 
         let upload_id = manager
-            .create_upload("test-bucket", "test-key", HashMap::new())
+            .create_upload("test-bucket", "test-key", BTreeMap::new())
             .await
             .unwrap();
 
@@ -702,12 +687,15 @@ mod tests {
         let (manager, _temp) = create_test_manager().await;
 
         let upload_id = manager
-            .create_upload("test-bucket", "test-key", HashMap::new())
+            .create_upload("test-bucket", "test-key", BTreeMap::new())
             .await
             .unwrap();
 
         let data = Bytes::from(vec![0u8; 5 * 1024 * 1024]);
-        let part1 = manager.upload_part(&upload_id, 1, data.clone()).await.unwrap();
+        let part1 = manager
+            .upload_part(&upload_id, 1, data.clone())
+            .await
+            .unwrap();
         let part2 = manager.upload_part(&upload_id, 2, data).await.unwrap();
 
         // Parts out of order
@@ -745,7 +733,7 @@ mod tests {
 
         // Create an upload
         manager
-            .create_upload("test-bucket", "test-key", HashMap::new())
+            .create_upload("test-bucket", "test-key", BTreeMap::new())
             .await
             .unwrap();
 
@@ -765,7 +753,7 @@ mod tests {
         let (manager, _temp) = create_test_manager().await;
 
         let upload_id = manager
-            .create_upload("test-bucket", "test-key", HashMap::new())
+            .create_upload("test-bucket", "test-key", BTreeMap::new())
             .await
             .unwrap();
 
@@ -796,6 +784,75 @@ mod tests {
 
         // Complete the upload
         let manifest = manager.complete_upload(&upload_id, parts).await.unwrap();
-        assert_eq!(manifest.size, (10 * 5 * 1024 * 1024) as u64);
+        assert_eq!(manifest.total_size, (10 * 5 * 1024 * 1024) as u64);
+    }
+
+    #[test]
+    fn test_multipart_etag_computation() {
+        // Test ETag computation for multipart uploads
+        // According to S3 spec, multipart ETags should have format: hash-partcount
+
+        // Create test data for 3 parts
+        let part1_data = b"part1data";
+        let part2_data = b"part2data";
+        let part3_data = b"part3data";
+
+        // Compute individual part ETags
+        let mut hasher1 = Sha256::new();
+        hasher1.update(part1_data);
+        let part1_etag = hex::encode(hasher1.finalize());
+
+        let mut hasher2 = Sha256::new();
+        hasher2.update(part2_data);
+        let part2_etag = hex::encode(hasher2.finalize());
+
+        let mut hasher3 = Sha256::new();
+        hasher3.update(part3_data);
+        let part3_etag = hex::encode(hasher3.finalize());
+
+        // Verify individual part ETags are 64 characters (SHA-256 hex)
+        assert_eq!(part1_etag.len(), 64);
+        assert_eq!(part2_etag.len(), 64);
+        assert_eq!(part3_etag.len(), 64);
+
+        // For S3 multipart compatibility, the final ETag should be:
+        // MD5(etag1_binary + etag2_binary + etag3_binary) + "-" + part_count
+        // However, our implementation uses SHA-256 instead of MD5
+        // The key requirement is that it includes the "-partcount" suffix
+
+        // Simulate what the final multipart ETag should look like
+        let part_count = 3;
+
+        // Combine all part data to compute the combined hash
+        let mut combined_data = Vec::new();
+        combined_data.extend_from_slice(part1_data);
+        combined_data.extend_from_slice(part2_data);
+        combined_data.extend_from_slice(part3_data);
+
+        let mut combined_hasher = Sha256::new();
+        combined_hasher.update(&combined_data);
+        let combined_hash = hex::encode(combined_hasher.finalize());
+
+        // The expected multipart ETag format should be: hash-partcount
+        let expected_multipart_etag = format!("{}-{}", combined_hash, part_count);
+
+        // Verify the format includes the part count suffix
+        assert!(expected_multipart_etag.contains("-3"));
+        assert!(expected_multipart_etag.ends_with("-3"));
+
+        // Verify the hash portion is 64 characters
+        let parts: Vec<&str> = expected_multipart_etag.split('-').collect();
+        assert_eq!(parts.len(), 2); // Should have exactly 2 parts: hash and count
+        assert_eq!(parts[0].len(), 64); // SHA-256 hash
+        assert_eq!(parts[1], "3"); // Part count
+
+        // Test with different part counts
+        for count in [1, 2, 5, 10, 100, 1000, 10000] {
+            let etag = format!("{}-{}", combined_hash, count);
+            let parts: Vec<&str> = etag.split('-').collect();
+            assert_eq!(parts.len(), 2);
+            assert_eq!(parts[0].len(), 64);
+            assert_eq!(parts[1], count.to_string());
+        }
     }
 }

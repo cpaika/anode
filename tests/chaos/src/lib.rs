@@ -9,19 +9,19 @@
 //! - Rolling restarts and cascading failures
 //! - Split-brain scenarios
 
-pub mod scenarios;
+pub mod disk;
 pub mod network;
 pub mod process;
-pub mod disk;
 pub mod runner;
+pub mod scenarios;
 pub mod verification;
 
 // Re-export commonly used types
-pub use runner::{ChaosRunner, ChaosResult, TestReport};
-pub use scenarios::{ChaosScenario, ScenarioConfig};
+pub use disk::DiskChaos;
 pub use network::{NetworkChaos, NetworkCondition};
 pub use process::ProcessChaos;
-pub use disk::DiskChaos;
+pub use runner::{ChaosResult, ChaosRunner, TestReport};
+pub use scenarios::{ChaosScenario, ScenarioConfig};
 pub use verification::{DataVerifier, VerificationResult};
 
 use anode_test_harness::TestHarnessError;
@@ -59,6 +59,9 @@ pub enum ChaosError {
 
     #[error("Timeout: {0}")]
     Timeout(String),
+
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
 }
 
 impl From<bollard::errors::Error> for ChaosError {
@@ -94,7 +97,7 @@ pub mod utils {
                         sleep(delay).await;
                         delay *= 2;
                     }
-                }
+                },
             }
         }
 

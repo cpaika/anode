@@ -68,6 +68,10 @@ pub struct ClusterConfig {
     /// Election timeout in milliseconds
     #[serde(default = "default_election_timeout")]
     pub election_timeout_ms: u64,
+
+    /// TLS configuration for internal inter-node communication (optional)
+    #[serde(default)]
+    pub internal_tls: Option<InternalTlsConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -117,6 +121,63 @@ pub struct S3Config {
     /// Enable virtual-hosted-style requests (bucket.domain.com)
     #[serde(default)]
     pub virtual_host_style: bool,
+
+    /// TLS configuration (optional)
+    #[serde(default)]
+    pub tls: Option<TlsConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TlsConfig {
+    /// Path to TLS certificate file (PEM format)
+    pub cert_file: PathBuf,
+
+    /// Path to TLS private key file (PEM format)
+    pub key_file: PathBuf,
+
+    /// Path to CA certificate file for client certificate authentication (optional)
+    #[serde(default)]
+    pub ca_file: Option<PathBuf>,
+
+    /// Require client certificate authentication
+    #[serde(default)]
+    pub require_client_cert: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct InternalTlsConfig {
+    /// Enable TLS for internal inter-node communication (gRPC)
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Path to server TLS certificate file (PEM format)
+    /// This is the certificate presented by the server during TLS handshake
+    pub cert_file: PathBuf,
+
+    /// Path to server TLS private key file (PEM format)
+    pub key_file: PathBuf,
+
+    /// Path to CA certificate file for validating peer certificates
+    /// When set, enables mTLS - peers must present valid certificates signed by this CA
+    #[serde(default)]
+    pub ca_file: Option<PathBuf>,
+
+    /// Require client certificate authentication (mTLS)
+    /// When true, all connecting peers must present valid client certificates
+    /// Only effective if ca_file is set
+    #[serde(default)]
+    pub require_client_cert: bool,
+
+    /// List of allowed DNS names in peer certificates (optional)
+    /// If set, peer certificates must contain one of these DNS names in their SAN
+    /// Provides additional security beyond CA validation
+    #[serde(default)]
+    pub allowed_dns_names: Vec<String>,
+
+    /// Enable TLS certificate verification
+    /// If false, accepts any certificate (useful for testing, NOT recommended for production)
+    #[serde(default = "default_true")]
+    pub verify_certificates: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -182,6 +243,12 @@ pub struct LoggingConfig {
     #[serde(default = "default_log_level")]
     pub level: String,
 
+    /// Per-module log levels (e.g., "anode_storage=debug,anode_s3=info")
+    /// If set, this takes precedence over the global level setting
+    /// Format: "module1=level1,module2=level2,..."
+    #[serde(default)]
+    pub module_levels: Option<String>,
+
     /// Enable JSON formatted logs
     #[serde(default)]
     pub json_format: bool,
@@ -200,24 +267,60 @@ pub struct LoggingConfig {
 }
 
 // Default value functions
-fn default_heartbeat_interval() -> u64 { 1000 }
-fn default_election_timeout() -> u64 { 3000 }
-fn default_chunk_size() -> String { "4MB".to_string() }
-fn default_sync_writes() -> bool { false }
-fn default_metadata_cache_size() -> usize { 100 * 1024 * 1024 } // 100MB
-fn default_io_threads() -> usize { num_cpus::get() }
-fn default_max_body_size() -> usize { 5 * 1024 * 1024 * 1024 } // 5GB
-fn default_request_timeout() -> u64 { 300 }
-fn default_true() -> bool { true }
-fn default_min_part_size() -> usize { 5 * 1024 * 1024 } // 5MB
-fn default_snapshot_interval() -> u64 { 10000 }
-fn default_max_log_entries() -> u64 { 100000 }
-fn default_compaction_threshold() -> u64 { 50000 }
-fn default_parquet_cache_size() -> usize { 256 * 1024 * 1024 } // 256MB
-fn default_row_group_size() -> usize { 100000 }
-fn default_metrics_interval() -> u64 { 15 }
-fn default_log_level() -> String { "info".to_string() }
-fn default_max_log_size() -> usize { 100 * 1024 * 1024 } // 100MB
+fn default_heartbeat_interval() -> u64 {
+    1000
+}
+fn default_election_timeout() -> u64 {
+    3000
+}
+fn default_chunk_size() -> String {
+    "4MB".to_string()
+}
+fn default_sync_writes() -> bool {
+    false
+}
+fn default_metadata_cache_size() -> usize {
+    100 * 1024 * 1024
+} // 100MB
+fn default_io_threads() -> usize {
+    num_cpus::get()
+}
+fn default_max_body_size() -> usize {
+    5 * 1024 * 1024 * 1024
+} // 5GB
+fn default_request_timeout() -> u64 {
+    300
+}
+fn default_true() -> bool {
+    true
+}
+fn default_min_part_size() -> usize {
+    5 * 1024 * 1024
+} // 5MB
+fn default_snapshot_interval() -> u64 {
+    10000
+}
+fn default_max_log_entries() -> u64 {
+    100000
+}
+fn default_compaction_threshold() -> u64 {
+    50000
+}
+fn default_parquet_cache_size() -> usize {
+    256 * 1024 * 1024
+} // 256MB
+fn default_row_group_size() -> usize {
+    100000
+}
+fn default_metrics_interval() -> u64 {
+    15
+}
+fn default_log_level() -> String {
+    "info".to_string()
+}
+fn default_max_log_size() -> usize {
+    100 * 1024 * 1024
+} // 100MB
 
 impl Config {
     /// Load configuration from a TOML file
@@ -232,46 +335,107 @@ impl Config {
         // Validate node config
         if self.node.id == 0 {
             return Err(ConfigError::ValidationError(
-                "Node ID must be greater than 0".to_string()
+                "Node ID must be greater than 0".to_string(),
             ));
         }
 
         if self.node.name.is_empty() {
             return Err(ConfigError::ValidationError(
-                "Node name cannot be empty".to_string()
+                "Node name cannot be empty".to_string(),
             ));
         }
 
         // Validate cluster config
         if self.cluster.replication_factor == 0 {
             return Err(ConfigError::ValidationError(
-                "Replication factor must be greater than 0".to_string()
+                "Replication factor must be greater than 0".to_string(),
             ));
         }
 
         if self.cluster.placement_groups == 0 {
             return Err(ConfigError::ValidationError(
-                "Placement groups must be greater than 0".to_string()
+                "Placement groups must be greater than 0".to_string(),
             ));
         }
 
         // Validate storage config
-        let chunk_size = parse_size(&self.storage.chunk_size)
-            .ok_or_else(|| ConfigError::ValidationError(
-                format!("Invalid chunk size: {}", self.storage.chunk_size)
-            ))?;
+        let chunk_size = parse_size(&self.storage.chunk_size).ok_or_else(|| {
+            ConfigError::ValidationError(format!("Invalid chunk size: {}", self.storage.chunk_size))
+        })?;
 
-        if chunk_size < 1024 * 1024 { // Minimum 1MB
+        if chunk_size < 1024 * 1024 {
+            // Minimum 1MB
             return Err(ConfigError::ValidationError(
-                "Chunk size must be at least 1MB".to_string()
+                "Chunk size must be at least 1MB".to_string(),
             ));
         }
 
         // Validate S3 config
         if self.s3.min_part_size < 5 * 1024 * 1024 {
             return Err(ConfigError::ValidationError(
-                "Minimum part size must be at least 5MB (S3 requirement)".to_string()
+                "Minimum part size must be at least 5MB (S3 requirement)".to_string(),
             ));
+        }
+
+        // Validate S3 TLS config if present
+        if let Some(ref tls) = self.s3.tls {
+            if !tls.cert_file.exists() {
+                return Err(ConfigError::ValidationError(format!(
+                    "TLS certificate file not found: {:?}",
+                    tls.cert_file
+                )));
+            }
+            if !tls.key_file.exists() {
+                return Err(ConfigError::ValidationError(format!(
+                    "TLS private key file not found: {:?}",
+                    tls.key_file
+                )));
+            }
+            if let Some(ref ca_file) = tls.ca_file {
+                if !ca_file.exists() {
+                    return Err(ConfigError::ValidationError(format!(
+                        "TLS CA file not found: {:?}",
+                        ca_file
+                    )));
+                }
+            }
+            if tls.require_client_cert && tls.ca_file.is_none() {
+                return Err(ConfigError::ValidationError(
+                    "Client certificate authentication requires ca_file to be set".to_string(),
+                ));
+            }
+        }
+
+        // Validate internal TLS config if present
+        if let Some(ref tls) = self.cluster.internal_tls {
+            if tls.enabled {
+                if !tls.cert_file.exists() {
+                    return Err(ConfigError::ValidationError(format!(
+                        "Internal TLS certificate file not found: {:?}",
+                        tls.cert_file
+                    )));
+                }
+                if !tls.key_file.exists() {
+                    return Err(ConfigError::ValidationError(format!(
+                        "Internal TLS private key file not found: {:?}",
+                        tls.key_file
+                    )));
+                }
+                if let Some(ref ca_file) = tls.ca_file {
+                    if !ca_file.exists() {
+                        return Err(ConfigError::ValidationError(format!(
+                            "Internal TLS CA file not found: {:?}",
+                            ca_file
+                        )));
+                    }
+                }
+                if tls.require_client_cert && tls.ca_file.is_none() {
+                    return Err(ConfigError::ValidationError(
+                        "Internal TLS client certificate authentication requires ca_file to be set"
+                            .to_string(),
+                    ));
+                }
+            }
         }
 
         Ok(())
@@ -303,6 +467,7 @@ impl Default for Config {
                 placement_groups: 128,
                 heartbeat_interval_ms: default_heartbeat_interval(),
                 election_timeout_ms: default_election_timeout(),
+                internal_tls: None,
             },
             storage: StorageConfig {
                 data_dir: PathBuf::from("/var/lib/anode/data"),
@@ -318,6 +483,7 @@ impl Default for Config {
                 enable_multipart: default_true(),
                 min_part_size: default_min_part_size(),
                 virtual_host_style: false,
+                tls: None,
             },
             raft: RaftConfig {
                 snapshot_interval: default_snapshot_interval(),
@@ -339,6 +505,7 @@ impl Default for Config {
             },
             logging: LoggingConfig {
                 level: default_log_level(),
+                module_levels: None,
                 json_format: false,
                 file: None,
                 rotate: false,
@@ -352,17 +519,17 @@ impl Default for Config {
 fn parse_size(s: &str) -> Option<usize> {
     let s = s.trim().to_uppercase();
     let (num_str, multiplier) = if s.ends_with("KB") {
-        (&s[..s.len()-2], 1024)
+        (&s[..s.len() - 2], 1024)
     } else if s.ends_with("MB") {
-        (&s[..s.len()-2], 1024 * 1024)
+        (&s[..s.len() - 2], 1024 * 1024)
     } else if s.ends_with("GB") {
-        (&s[..s.len()-2], 1024 * 1024 * 1024)
+        (&s[..s.len() - 2], 1024 * 1024 * 1024)
     } else if s.ends_with('K') {
-        (&s[..s.len()-1], 1024)
+        (&s[..s.len() - 1], 1024)
     } else if s.ends_with('M') {
-        (&s[..s.len()-1], 1024 * 1024)
+        (&s[..s.len() - 1], 1024 * 1024)
     } else if s.ends_with('G') {
-        (&s[..s.len()-1], 1024 * 1024 * 1024)
+        (&s[..s.len() - 1], 1024 * 1024 * 1024)
     } else {
         return s.parse().ok();
     };

@@ -2,9 +2,9 @@ use crate::blobs::BlobStore;
 use crate::chunks::ChunkId;
 use crate::error::{Result, StorageError};
 use crate::metadata::MetadataStore;
-use anode_protocol::{ChunkId as ProtocolChunkId, ObjectKey};
+use anode_protocol::ObjectKey;
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
@@ -91,7 +91,7 @@ impl IntegrityChecker {
         report.total_objects = chunk_to_objects
             .values()
             .flat_map(|v| v.iter())
-            .collect::<HashSet<_>>()
+            .collect::<BTreeSet<_>>()
             .len();
 
         // Get all chunks from metadata
@@ -109,10 +109,7 @@ impl IntegrityChecker {
             let exists = self.blobs.chunk_exists(chunk_id)?;
 
             if !exists {
-                let affected_objects = chunk_to_objects
-                    .get(chunk_id)
-                    .cloned()
-                    .unwrap_or_default();
+                let affected_objects = chunk_to_objects.get(chunk_id).cloned().unwrap_or_default();
 
                 report.missing_chunks.push(MissingChunk {
                     chunk_id: chunk_id.clone(),
@@ -126,7 +123,7 @@ impl IntegrityChecker {
             match self.verify_chunk(chunk_id) {
                 Ok(true) => {
                     // Chunk is valid
-                }
+                },
                 Ok(false) => {
                     // Chunk is corrupted
                     let data = self.blobs.read_chunk(chunk_id)?;
@@ -149,10 +146,8 @@ impl IntegrityChecker {
                         })
                         .unwrap_or([0u8; 32]);
 
-                    let affected_objects = chunk_to_objects
-                        .get(chunk_id)
-                        .cloned()
-                        .unwrap_or_default();
+                    let affected_objects =
+                        chunk_to_objects.get(chunk_id).cloned().unwrap_or_default();
 
                     report.corrupted_chunks.push(CorruptedChunk {
                         chunk_id: chunk_id.clone(),
@@ -160,14 +155,12 @@ impl IntegrityChecker {
                         actual_hash,
                         affected_objects,
                     });
-                }
+                },
                 Err(e) => {
                     warn!("Error verifying chunk {}: {}", chunk_id, e);
                     // Treat as corrupted
-                    let affected_objects = chunk_to_objects
-                        .get(chunk_id)
-                        .cloned()
-                        .unwrap_or_default();
+                    let affected_objects =
+                        chunk_to_objects.get(chunk_id).cloned().unwrap_or_default();
 
                     report.corrupted_chunks.push(CorruptedChunk {
                         chunk_id: chunk_id.clone(),
@@ -175,7 +168,7 @@ impl IntegrityChecker {
                         actual_hash: [0u8; 32],
                         affected_objects,
                     });
-                }
+                },
             }
         }
 
@@ -204,11 +197,9 @@ impl IntegrityChecker {
         let manifest = self
             .metadata
             .get_object(&key.bucket, &key.key)?
-            .ok_or_else(|| {
-                StorageError::ObjectNotFound {
-                    bucket: key.bucket.clone(),
-                    key: key.key.clone(),
-                }
+            .ok_or_else(|| StorageError::ObjectNotFound {
+                bucket: key.bucket.clone(),
+                key: key.key.clone(),
             })?;
 
         // Convert protocol ChunkIds to storage ChunkIds
@@ -267,7 +258,7 @@ impl IntegrityChecker {
         let blob_chunks = self.blobs.list_chunks()?;
 
         // Get all chunks referenced in metadata
-        let metadata_chunks: HashSet<ChunkId> =
+        let metadata_chunks: BTreeSet<ChunkId> =
             self.metadata.list_all_chunks()?.into_iter().collect();
 
         // Find chunks in blob store not in metadata
@@ -294,7 +285,7 @@ impl IntegrityChecker {
 
         // Build actual reference counts by scanning all objects
         let chunk_refs = self.build_chunk_reference_map()?;
-        let actual_counts: HashMap<ChunkId, u32> = chunk_refs
+        let actual_counts: BTreeMap<ChunkId, u32> = chunk_refs
             .iter()
             .map(|(chunk_id, objects)| (chunk_id.clone(), objects.len() as u32))
             .collect();
@@ -325,8 +316,8 @@ impl IntegrityChecker {
     }
 
     /// Build a map of chunk_id -> Vec<ObjectKey> showing which objects reference each chunk
-    fn build_chunk_reference_map(&self) -> Result<HashMap<ChunkId, Vec<ObjectKey>>> {
-        let mut chunk_to_objects: HashMap<ChunkId, Vec<ObjectKey>> = HashMap::new();
+    fn build_chunk_reference_map(&self) -> Result<BTreeMap<ChunkId, Vec<ObjectKey>>> {
+        let mut chunk_to_objects: BTreeMap<ChunkId, Vec<ObjectKey>> = BTreeMap::new();
 
         // Get all buckets
         let buckets = self.metadata.list_buckets()?;
@@ -336,14 +327,14 @@ impl IntegrityChecker {
             let objects = self.metadata.list_objects(&bucket.name, "", usize::MAX)?;
 
             for manifest in objects {
-                let object_key = manifest.object_key.clone();
+                let object_key = manifest.key.clone();
 
                 // Convert protocol ChunkIds to storage ChunkIds
                 for chunk_id in &manifest.chunks {
                     let storage_chunk_id = ChunkId(chunk_id.to_hex());
                     chunk_to_objects
                         .entry(storage_chunk_id)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(object_key.clone());
                 }
             }
@@ -359,7 +350,7 @@ mod tests {
     use crate::blobs::BlobStore;
     use crate::chunks::compute_chunk_id;
     use crate::metadata::{BucketConfig, MetadataStore};
-    use anode_protocol::ObjectManifest as ProtocolManifest;
+    use anode_protocol::{ChunkId as ProtocolChunkId, ObjectManifest as ProtocolManifest};
     use tempfile::TempDir;
 
     fn setup_test_env() -> (IntegrityChecker, TempDir) {
@@ -396,7 +387,10 @@ mod tests {
 
         // Write different data with same chunk ID
         let corrupted_data = b"Corrupted!!!";
-        checker.blobs.write_chunk(&chunk_id, corrupted_data).unwrap();
+        checker
+            .blobs
+            .write_chunk(&chunk_id, corrupted_data)
+            .unwrap();
 
         let result = checker.verify_chunk(&chunk_id).unwrap();
         assert!(!result);
@@ -554,10 +548,7 @@ mod tests {
         let chunk_id = compute_chunk_id(original_data);
 
         // Write different data
-        checker
-            .blobs
-            .write_chunk(&chunk_id, b"Corrupted!")
-            .unwrap();
+        checker.blobs.write_chunk(&chunk_id, b"Corrupted!").unwrap();
         checker.metadata.increment_chunk_ref(&chunk_id).unwrap();
 
         // Create object

@@ -1,0 +1,161 @@
+# Alertmanager configuration for Anode
+global:
+  resolve_timeout: 5m
+  # SMTP configuration for email alerts
+  # smtp_smarthost: 'smtp.gmail.com:587'
+  # smtp_from: 'alertmanager@example.com'
+  # smtp_auth_username: 'alertmanager@example.com'
+  # smtp_auth_password: 'your-password'
+  # smtp_require_tls: true
+
+# Templates for alert notifications
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Route tree for alerts
+route:
+  # Default receiver
+  receiver: 'default'
+
+  # Group alerts by cluster and alertname
+  group_by: ['cluster', 'alertname']
+
+  # Wait time before sending initial notification
+  group_wait: 10s
+
+  # Wait time before sending notification about new alerts
+  group_interval: 10s
+
+  # Wait time before re-sending notification
+  repeat_interval: 12h
+
+  # Child routes
+  routes:
+    # Critical alerts route
+    - match:
+        severity: critical
+      receiver: 'critical'
+      continue: true
+      group_wait: 0s
+      repeat_interval: 5m
+
+    # Warning alerts route
+    - match:
+        severity: warning
+      receiver: 'warning'
+      repeat_interval: 30m
+
+    # Info alerts route
+    - match:
+        severity: info
+      receiver: 'info'
+      repeat_interval: 1h
+
+    # Raft-specific alerts
+    - match:
+        component: raft
+      receiver: 'raft'
+      group_by: ['cluster', 'alertname', 'instance']
+      group_wait: 5s
+      repeat_interval: 10m
+
+    # Storage alerts
+    - match:
+        component: storage
+      receiver: 'storage'
+      group_by: ['cluster', 'alertname']
+      repeat_interval: 30m
+
+# Inhibition rules - suppress certain alerts when others are firing
+inhibit_rules:
+  # Inhibit warning if critical is firing
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['cluster', 'alertname', 'instance']
+
+  # Inhibit node down alerts if cluster is down
+  - source_match:
+      alertname: 'AnodeClusterQuorumLost'
+    target_match:
+      alertname: 'AnodeNodeDown'
+    equal: ['cluster']
+
+  # Inhibit replication lag if node is down
+  - source_match:
+      alertname: 'AnodeNodeDown'
+    target_match_re:
+      alertname: 'AnodeReplication.*'
+    equal: ['cluster', 'instance']
+
+# Receivers for notifications
+receivers:
+  # Default receiver (webhook)
+  - name: 'default'
+    webhook_configs:
+      - url: 'http://localhost:5001/webhook'
+        send_resolved: true
+
+  # Critical alerts receiver
+  - name: 'critical'
+    # Email configuration
+    # email_configs:
+    #   - to: 'oncall@example.com'
+    #     headers:
+    #       Subject: '[CRITICAL] Anode Alert: {{ .GroupLabels.alertname }}'
+    #     html: '{{ template "email.default.html" . }}'
+
+    # Slack configuration
+    # slack_configs:
+    #   - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+    #     channel: '#alerts-critical'
+    #     title: '[CRITICAL] {{ .GroupLabels.alertname }}'
+    #     text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+    #     send_resolved: true
+
+    # PagerDuty configuration
+    # pagerduty_configs:
+    #   - routing_key: 'YOUR_PAGERDUTY_ROUTING_KEY'
+    #     description: '{{ .GroupLabels.alertname }}'
+    #     severity: 'critical'
+    #     details:
+    #       cluster: '{{ .GroupLabels.cluster }}'
+    #       instance: '{{ .GroupLabels.instance }}'
+
+    # Webhook configuration
+    webhook_configs:
+      - url: 'http://localhost:5001/webhook/critical'
+        send_resolved: true
+
+  # Warning alerts receiver
+  - name: 'warning'
+    # Slack configuration
+    # slack_configs:
+    #   - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+    #     channel: '#alerts-warning'
+    #     title: '[WARNING] {{ .GroupLabels.alertname }}'
+    #     text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+    #     send_resolved: true
+
+    webhook_configs:
+      - url: 'http://localhost:5001/webhook/warning'
+        send_resolved: true
+
+  # Info alerts receiver
+  - name: 'info'
+    webhook_configs:
+      - url: 'http://localhost:5001/webhook/info'
+        send_resolved: true
+
+  # Raft component alerts
+  - name: 'raft'
+    webhook_configs:
+      - url: 'http://localhost:5001/webhook/raft'
+        send_resolved: true
+
+  # Storage component alerts
+  - name: 'storage'
+    webhook_configs:
+      - url: 'http://localhost:5001/webhook/storage'
+        send_resolved: true

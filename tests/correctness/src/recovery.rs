@@ -3,9 +3,18 @@
 //! Tests that verify the system can recover from failures, corruption,
 //! and data loss.
 
+use anode_test_harness::{
+    assertions::{assert_data_replicated, assert_object_content, assert_object_exists},
+    cluster::TestCluster,
+    Result,
+};
+use std::time::Duration;
+use tokio::time::sleep;
+use tracing::info;
 
 /// Test data rebuild after node loss
 #[tokio::test]
+#[ignore = "Requires cluster infrastructure - run with integration tests"]
 async fn test_data_rebuild_after_node_loss() -> Result<()> {
     crate::init_tracing();
     info!("Starting data rebuild test");
@@ -57,6 +66,7 @@ async fn test_data_rebuild_after_node_loss() -> Result<()> {
 
 /// Test corruption detection and repair
 #[tokio::test]
+#[ignore = "Requires cluster infrastructure - run with integration tests"]
 async fn test_corruption_detection_and_repair() -> Result<()> {
     crate::init_tracing();
     info!("Starting corruption detection test");
@@ -102,6 +112,7 @@ async fn test_corruption_detection_and_repair() -> Result<()> {
 
 /// Test recovery after total cluster shutdown
 #[tokio::test]
+#[ignore = "Requires cluster infrastructure - run with integration tests"]
 async fn test_recovery_after_total_shutdown() -> Result<()> {
     crate::init_tracing();
     info!("Starting total shutdown recovery test");
@@ -149,6 +160,7 @@ async fn test_recovery_after_total_shutdown() -> Result<()> {
 
 /// Test recovery from minority failure
 #[tokio::test]
+#[ignore = "Requires cluster infrastructure - run with integration tests"]
 async fn test_minority_failure_recovery() -> Result<()> {
     crate::init_tracing();
     info!("Starting minority failure recovery test");
@@ -213,6 +225,7 @@ async fn test_minority_failure_recovery() -> Result<()> {
 
 /// Test recovery with concurrent operations
 #[tokio::test]
+#[ignore = "Requires cluster infrastructure - run with integration tests"]
 async fn test_recovery_with_concurrent_operations() -> Result<()> {
     crate::init_tracing();
     info!("Starting recovery with concurrent operations test");
@@ -278,7 +291,13 @@ async fn test_recovery_with_concurrent_operations() -> Result<()> {
     // Verify as many concurrent writes as possible
     // Some may have failed during the node restart
     let url = format!("{}/{}/{}", endpoint, bucket, "concurrent-0");
-    if client.get(&url).send().await.ok().map_or(false, |r| r.status().is_success()) {
+    if client
+        .get(&url)
+        .send()
+        .await
+        .ok()
+        .is_some_and(|r| r.status().is_success())
+    {
         info!("Concurrent writes survived recovery");
     }
 
@@ -289,6 +308,7 @@ async fn test_recovery_with_concurrent_operations() -> Result<()> {
 
 /// Test raft log replay after crash
 #[tokio::test]
+#[ignore = "Requires cluster infrastructure - run with integration tests"]
 async fn test_raft_log_replay() -> Result<()> {
     crate::init_tracing();
     info!("Starting raft log replay test");
@@ -340,6 +360,7 @@ async fn test_raft_log_replay() -> Result<()> {
 
 /// Test snapshot restore
 #[tokio::test]
+#[ignore = "Requires cluster infrastructure - run with integration tests"]
 async fn test_snapshot_restore() -> Result<()> {
     crate::init_tracing();
     info!("Starting snapshot restore test");
@@ -388,51 +409,4 @@ async fn test_snapshot_restore() -> Result<()> {
     cluster.stop().await?;
     info!("Snapshot restore test passed");
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    #[ignore] // Requires running cluster
-    async fn test_recovery_rebuild() {
-        let _ = test_data_rebuild_after_node_loss().await;
-    }
-
-    #[tokio::test]
-    #[ignore] // Requires running cluster
-    async fn test_recovery_corruption() {
-        let _ = test_corruption_detection_and_repair().await;
-    }
-
-    #[tokio::test]
-    #[ignore] // Requires running cluster
-    async fn test_recovery_total_shutdown() {
-        let _ = test_recovery_after_total_shutdown().await;
-    }
-
-    #[tokio::test]
-    #[ignore] // Requires running cluster
-    async fn test_recovery_minority() {
-        let _ = test_minority_failure_recovery().await;
-    }
-
-    #[tokio::test]
-    #[ignore] // Requires running cluster
-    async fn test_recovery_concurrent() {
-        let _ = test_recovery_with_concurrent_operations().await;
-    }
-
-    #[tokio::test]
-    #[ignore] // Requires running cluster
-    async fn test_recovery_raft_log() {
-        let _ = test_raft_log_replay().await;
-    }
-
-    #[tokio::test]
-    #[ignore] // Requires running cluster
-    async fn test_recovery_snapshot() {
-        let _ = test_snapshot_restore().await;
-    }
 }

@@ -3,9 +3,7 @@
 /// This module provides batch delete functionality for S3 objects,
 /// allowing multiple objects to be deleted in a single request.
 /// Operations are performed atomically where possible.
-
-use crate::error::{S3Error, S3Result};
-use anode_protocol::ObjectKey;
+use crate::error::S3Result;
 use anode_storage::StorageEngine;
 use std::sync::Arc;
 
@@ -39,9 +37,7 @@ impl BatchHandler {
 
         // Process each object deletion
         for obj in objects {
-            let object_key = ObjectKey::new(bucket, &obj.key);
-
-            match self.storage.delete_object(&object_key).await {
+            match self.storage.delete_object(bucket, &obj.key).await {
                 Ok(_) => {
                     // Deletion successful
                     if !quiet {
@@ -52,7 +48,7 @@ impl BatchHandler {
                             delete_marker_version_id: None,
                         });
                     }
-                }
+                },
                 Err(e) => {
                     // Deletion failed - record the error
                     // S3 typically continues even if some objects fail to delete
@@ -69,10 +65,7 @@ impl BatchHandler {
                                 });
                             }
                             continue;
-                        }
-                        anode_storage::StorageError::PermissionDenied(msg) => {
-                            ("AccessDenied".to_string(), msg)
-                        }
+                        },
                         _ => ("InternalError".to_string(), e.to_string()),
                     };
 
@@ -82,7 +75,7 @@ impl BatchHandler {
                         code,
                         message,
                     });
-                }
+                },
             }
         }
 

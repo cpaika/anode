@@ -1,9 +1,9 @@
 // Shared benchmark utilities
 
-use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use std::time::{Duration, Instant};
-use sysinfo::{ProcessExt, System, SystemExt};
+use sysinfo::System;
 
 /// Comprehensive benchmark result including performance metrics
 #[derive(Debug, Clone)]
@@ -150,9 +150,15 @@ pub fn calculate_percentiles(mut latencies: Vec<Duration>) -> (u64, u64, u64) {
     let p99_idx = (len as f64 * 0.99) as usize;
     let p999_idx = (len as f64 * 0.999) as usize;
 
-    let p50 = latencies.get(p50_idx.min(len - 1)).unwrap_or(&Duration::ZERO);
-    let p99 = latencies.get(p99_idx.min(len - 1)).unwrap_or(&Duration::ZERO);
-    let p999 = latencies.get(p999_idx.min(len - 1)).unwrap_or(&Duration::ZERO);
+    let p50 = latencies
+        .get(p50_idx.min(len - 1))
+        .unwrap_or(&Duration::ZERO);
+    let p99 = latencies
+        .get(p99_idx.min(len - 1))
+        .unwrap_or(&Duration::ZERO);
+    let p999 = latencies
+        .get(p999_idx.min(len - 1))
+        .unwrap_or(&Duration::ZERO);
 
     (
         p50.as_micros() as u64,
@@ -254,7 +260,7 @@ mod tests {
 
         // Check magic numbers
         assert_eq!(&data[0..4], b"PAR1");
-        assert_eq!(&data[data.len()-4..], b"PAR1");
+        assert_eq!(&data[data.len() - 4..], b"PAR1");
     }
 
     #[test]

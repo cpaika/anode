@@ -7,7 +7,7 @@
 //! - Data rebalancing
 //! - Cluster configuration
 
-use crate::{setup_cluster, create_test_s3_client, unique_bucket_name, random_bytes, BucketFixture};
+use crate::{random_bytes, setup_cluster, BucketFixture};
 use aws_sdk_s3::primitives::ByteStream;
 use bytes::Bytes;
 use reqwest::Client;
@@ -39,15 +39,18 @@ async fn test_cluster_status() {
             i
         );
 
-        let status: serde_json::Value = response
-            .json()
-            .await
-            .expect("Failed to parse status JSON");
+        let status: serde_json::Value = response.json().await.expect("Failed to parse status JSON");
 
         // Verify basic status fields
-        assert!(status.get("node_id").is_some(), "Status should include node_id");
+        assert!(
+            status.get("node_id").is_some(),
+            "Status should include node_id"
+        );
         assert!(status.get("role").is_some(), "Status should include role");
-        assert!(status.get("cluster_size").is_some(), "Status should include cluster_size");
+        assert!(
+            status.get("cluster_size").is_some(),
+            "Status should include cluster_size"
+        );
     }
 }
 
@@ -80,10 +83,7 @@ async fn test_leader_election() {
             .await
             .expect("Failed to query leader");
 
-        let reported_leader: u64 = response
-            .json()
-            .await
-            .expect("Failed to parse leader ID");
+        let reported_leader: u64 = response.json().await.expect("Failed to parse leader ID");
 
         assert_eq!(
             reported_leader, leader_id,
@@ -102,11 +102,7 @@ async fn test_add_node() {
     let node = cluster.get_node(0).unwrap();
     let status_url = format!("{}/cluster/status", node.admin_endpoint());
 
-    let response = http_client
-        .get(&status_url)
-        .send()
-        .await
-        .unwrap();
+    let response = http_client.get(&status_url).send().await.unwrap();
 
     let initial_status: serde_json::Value = response.json().await.unwrap();
     let initial_size = initial_status["cluster_size"]
@@ -173,7 +169,8 @@ async fn test_rebalance() {
         let key = format!("object-{}", i);
         let data = random_bytes(1024 * 1024); // 1MB each
 
-        fixture.client
+        fixture
+            .client
             .put_object()
             .bucket(&fixture.bucket)
             .key(&key)
@@ -192,7 +189,8 @@ async fn test_rebalance() {
     for i in 0..10 {
         let key = format!("object-{}", i);
 
-        let get_result = fixture.client
+        let get_result = fixture
+            .client
             .get_object()
             .bucket(&fixture.bucket)
             .key(&key)
@@ -243,7 +241,8 @@ async fn test_cluster_metrics() {
     // Create some activity
     for i in 0..5 {
         let key = format!("object-{}", i);
-        fixture.client
+        fixture
+            .client
             .put_object()
             .bucket(&fixture.bucket)
             .key(&key)
@@ -272,10 +271,7 @@ async fn test_cluster_metrics() {
             );
 
             let metrics_text = resp.text().await.unwrap();
-            assert!(
-                !metrics_text.is_empty(),
-                "Metrics should not be empty"
-            );
+            assert!(!metrics_text.is_empty(), "Metrics should not be empty");
         } else {
             // Metrics endpoint might not be implemented yet
             eprintln!("Metrics endpoint not available on node {}", i);
@@ -293,7 +289,8 @@ async fn test_cluster_quorum() {
     let key = "quorum-test-object";
     let data = random_bytes(1024);
 
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -309,7 +306,8 @@ async fn test_cluster_quorum() {
     sleep(Duration::from_secs(2)).await;
 
     // Should still be able to read and write
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -323,7 +321,8 @@ async fn test_cluster_quorum() {
 
     // Should be able to write new data
     let new_key = "quorum-test-object-2";
-    let write_result = fixture.client
+    let write_result = fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(new_key)
@@ -347,7 +346,8 @@ async fn test_minority_failure() {
     let key = "minority-test-object";
     let data = random_bytes(1024);
 
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -364,7 +364,8 @@ async fn test_minority_failure() {
     sleep(Duration::from_secs(2)).await;
 
     // Should still have quorum and be operational
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -402,7 +403,8 @@ async fn test_node_restart() {
     let key = "restart-test-object";
     let data = random_bytes(1024);
 
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -425,7 +427,8 @@ async fn test_node_restart() {
     sleep(Duration::from_secs(5)).await;
 
     // Verify data is still accessible
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -479,17 +482,10 @@ async fn test_cluster_info() {
 
             // Verify nodes array
             if let Some(nodes) = info["nodes"].as_array() {
-                assert_eq!(
-                    nodes.len(),
-                    3,
-                    "Cluster should report 3 nodes"
-                );
+                assert_eq!(nodes.len(), 3, "Cluster should report 3 nodes");
 
                 for node_info in nodes {
-                    assert!(
-                        node_info.get("id").is_some(),
-                        "Node info should include id"
-                    );
+                    assert!(node_info.get("id").is_some(), "Node info should include id");
                     assert!(
                         node_info.get("endpoint").is_some(),
                         "Node info should include endpoint"

@@ -95,9 +95,8 @@ impl HealthChecker {
         let raft_health = self.check_raft_health().await;
         let cluster_health = self.check_cluster_health().await;
 
-        let overall_healthy = storage_health.healthy
-            && raft_health.healthy
-            && cluster_health.healthy;
+        let overall_healthy =
+            storage_health.healthy && raft_health.healthy && cluster_health.healthy;
 
         let overall = HealthStatus {
             healthy: overall_healthy,
@@ -174,15 +173,14 @@ impl HealthChecker {
             "total_nodes": status.total_nodes,
             "healthy_nodes": status.healthy_nodes,
             "leader_id": status.leader_id,
-            "placement_groups": status.placement_groups.len(),
+            "current_term": status.current_term,
         });
 
         ComponentHealth {
             healthy,
             message: format!(
                 "{}/{} nodes healthy",
-                status.healthy_nodes,
-                status.total_nodes
+                status.healthy_nodes, status.total_nodes
             ),
             details: Some(details),
         }
@@ -250,8 +248,8 @@ mod tests {
 
     #[test]
     fn test_component_health_with_details() {
-        let health = ComponentHealth::healthy("OK")
-            .with_details(serde_json::json!({ "foo": "bar" }));
+        let health =
+            ComponentHealth::healthy("OK").with_details(serde_json::json!({ "foo": "bar" }));
 
         assert!(health.healthy);
         assert!(health.details.is_some());

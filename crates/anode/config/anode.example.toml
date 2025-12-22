@@ -44,6 +44,36 @@ heartbeat_interval_ms = 1000
 # Should be significantly larger than heartbeat_interval_ms
 election_timeout_ms = 3000
 
+# TLS configuration for internal inter-node communication (optional)
+# Uncomment to enable secure, encrypted communication between Raft nodes
+# [cluster.internal_tls]
+# # Enable TLS for internal gRPC communication (default: false)
+# enabled = true
+#
+# # Path to server TLS certificate file (PEM format)
+# # This certificate is presented when other nodes connect to this node
+# cert_file = "/etc/anode/tls/internal/node.crt"
+#
+# # Path to server TLS private key file (PEM format)
+# key_file = "/etc/anode/tls/internal/node.key"
+#
+# # Path to CA certificate file for validating peer certificates (optional)
+# # When set, enables mutual TLS (mTLS) - peers must present valid certificates
+# # ca_file = "/etc/anode/tls/internal/ca.crt"
+#
+# # Require client certificate authentication (mTLS) (default: false)
+# # Only effective if ca_file is set
+# # When enabled, all connecting nodes must present valid client certificates
+# # require_client_cert = true
+#
+# # List of allowed DNS names in peer certificates (optional)
+# # Provides additional security by restricting which certificates are accepted
+# # allowed_dns_names = ["node1.cluster.local", "node2.cluster.local"]
+#
+# # Enable TLS certificate verification (default: true)
+# # WARNING: Setting to false is insecure and should only be used for testing
+# # verify_certificates = true
+
 [storage]
 # Root directory for data storage
 data_dir = "/var/lib/anode/data"
@@ -82,6 +112,22 @@ min_part_size = 5242880
 # Enable virtual-hosted-style requests (bucket.domain.com)
 # false = path-style (domain.com/bucket)
 virtual_host_style = false
+
+# TLS configuration (optional)
+# Uncomment to enable HTTPS for the S3 API
+# [s3.tls]
+# # Path to TLS certificate file (PEM format)
+# cert_file = "/etc/anode/tls/cert.pem"
+#
+# # Path to TLS private key file (PEM format)
+# key_file = "/etc/anode/tls/key.pem"
+#
+# # Path to CA certificate file for client certificate authentication (optional)
+# # ca_file = "/etc/anode/tls/ca.pem"
+#
+# # Require client certificate authentication (default: false)
+# # Only effective if ca_file is set
+# # require_client_cert = false
 
 [raft]
 # Snapshot interval in log entries (default: 10000)
@@ -124,7 +170,17 @@ retention_secs = 0
 
 [logging]
 # Log level: trace, debug, info, warn, error (default: info)
+# This sets the default log level for all modules
 level = "info"
+
+# Per-module log levels (optional)
+# Format: "module1=level1,module2=level2,..."
+# Examples:
+#   module_levels = "anode_storage=debug,anode_s3=info"
+#   module_levels = "anode_raft=trace,anode_storage=debug"
+# When set, this takes precedence over the global 'level' setting
+# Note: RUST_LOG environment variable takes precedence over both
+# module_levels = "anode_storage=debug"
 
 # Enable JSON formatted logs (default: false)
 json_format = false

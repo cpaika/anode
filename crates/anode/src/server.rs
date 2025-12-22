@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use axum::Router;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
@@ -11,6 +11,7 @@ use crate::admin::{admin_router, AdminState};
 use crate::cluster::{ClusterManager, NodeInfo};
 use crate::config::Config;
 use crate::health::HealthChecker;
+use crate::keystore::KeyStore;
 use crate::metrics::Metrics;
 
 use anode_parquet::ParquetCache;
@@ -27,6 +28,7 @@ pub struct Server {
     cluster_manager: Arc<ClusterManager>,
     health_checker: Arc<HealthChecker>,
     metrics: Arc<Metrics>,
+    keystore: Option<Arc<KeyStore>>,
     shutdown_tx: broadcast::Sender<()>,
     tasks: Arc<RwLock<Vec<JoinHandle<()>>>>,
 }
@@ -45,35 +47,37 @@ impl Server {
 
         // Initialize storage engine
         info!("Initializing storage engine");
+        let storage_config = anode_storage::StorageConfig {
+            data_dir: config.storage.data_dir.join("blobs"),
+            metadata_dir: config.storage.data_dir.join("metadata"),
+            chunk_size: anode_storage::chunks::CHUNK_SIZE,
+            sync_writes: true,
+        };
         let storage = Arc::new(
-            StorageEngine::new(config.storage.data_dir.clone())
-                .context("Failed to initialize storage engine")?
+            StorageEngine::open(storage_config)
+                .await
+                .context("Failed to initialize storage engine")?,
         );
 
         // Initialize Raft
         info!("Initializing Raft consensus");
-        let mut raft_config = RaftConfig::default();
-        raft_config.election_timeout_min_ms = config.cluster.election_timeout_ms;
-        raft_config.election_timeout_max_ms = config.cluster.election_timeout_ms * 2;
-        raft_config.heartbeat_interval_ms = config.cluster.heartbeat_interval_ms;
-        raft_config.node_id = config.node.id;
-        raft_config.data_dir = config.storage.data_dir.join("raft");
-
-        let raft_storage = anode_raft::RaftStorage::new(
-            raft_config.data_dir.clone()
-        ).await.context("Failed to initialize Raft storage")?;
-
-        let state_machine = anode_raft::StateMachine::new(storage.clone());
-        let network = anode_raft::Network::new();
+        let raft_config = RaftConfig::new(
+            config.node.id,
+            &config.cluster.name,
+            config.storage.data_dir.join("raft"),
+        )
+        .with_election_timeout(
+            config.cluster.election_timeout_ms,
+            config.cluster.election_timeout_ms * 2,
+        )
+        .with_heartbeat_interval(config.cluster.heartbeat_interval_ms);
 
         let raft = Arc::new(
-            AnodeRaft::new(
-                config.node.id,
-                raft_config.to_openraft_config(),
-                network.clone(),
-                raft_storage,
-                state_machine,
-            ).await.context("Failed to initialize Raft")?
+            anode_raft::RaftNodeBuilder::new(raft_config)
+                .storage_engine(storage.clone())
+                .build()
+                .await
+                .context("Failed to initialize Raft")?,
         );
 
         // Initialize Parquet cache
@@ -82,24 +86,35 @@ impl Server {
 
         // Initialize cluster manager
         info!("Initializing cluster manager");
-        let cluster_manager = Arc::new(
-            ClusterManager::new(
-                raft.clone(),
-                config.cluster.placement_groups,
-            ).await
-        );
+        let cluster_manager =
+            Arc::new(ClusterManager::new(raft.clone(), config.cluster.placement_groups).await);
 
         // Initialize health checker
-        let health_checker = Arc::new(
-            HealthChecker::new(
-                storage.clone(),
-                raft.clone(),
-                cluster_manager.clone(),
-            )
-        );
+        let health_checker = Arc::new(HealthChecker::new(
+            storage.clone(),
+            raft.clone(),
+            cluster_manager.clone(),
+        ));
 
         // Initialize metrics
         let metrics = Arc::new(Metrics::new());
+
+        // Initialize key store (optional, for access key management)
+        info!("Initializing access key store");
+        let keystore_path = config.storage.data_dir.join("keys.db");
+        let keystore = match KeyStore::open(&keystore_path) {
+            Ok(ks) => {
+                info!("Access key store initialized");
+                Some(Arc::new(ks))
+            },
+            Err(e) => {
+                warn!(
+                    "Failed to initialize key store: {}. Access key management will be disabled.",
+                    e
+                );
+                None
+            },
+        };
 
         // Create shutdown channel
         let (shutdown_tx, _) = broadcast::channel(1);
@@ -112,6 +127,7 @@ impl Server {
             cluster_manager,
             health_checker,
             metrics,
+            keystore,
             shutdown_tx,
             tasks: Arc::new(RwLock::new(Vec::new())),
         })
@@ -142,42 +158,93 @@ impl Server {
 
     /// Start the S3-compatible API server
     async fn start_s3_server(&self) -> Result<JoinHandle<()>> {
-        let addr: SocketAddr = self.config.node.s3_addr
+        let addr: SocketAddr = self
+            .config
+            .node
+            .s3_addr
             .parse()
             .context("Invalid S3 bind address")?;
 
-        info!("Starting S3 API server on {}", addr);
-
         // Create S3 router with storage backend
-        let s3_router = S3Router::new(self.storage.clone());
-        let app = s3_router.build();
-
-        let listener = tokio::net::TcpListener::bind(addr)
-            .await
-            .context("Failed to bind S3 server")?;
+        let s3_router = S3Router::new(self.storage.clone(), None);
+        let app = s3_router.into_router();
 
         let mut shutdown_rx = self.shutdown_tx.subscribe();
 
-        let handle = tokio::spawn(async move {
-            info!("S3 API server listening on {}", addr);
+        // Check if TLS is configured
+        if let Some(ref tls_config) = self.config.s3.tls {
+            info!("Starting S3 API server with TLS on {}", addr);
 
-            let serve = axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
+            // Log TLS configuration details
+            info!("TLS certificate: {:?}", tls_config.cert_file);
+            info!("TLS private key: {:?}", tls_config.key_file);
+            if let Some(ref ca_file) = tls_config.ca_file {
+                info!("TLS CA file: {:?}", ca_file);
+                if tls_config.require_client_cert {
+                    info!("Client certificate authentication: required");
+                } else {
+                    info!("Client certificate authentication: optional");
+                }
+            }
+
+            // Load TLS configuration
+            let tls_config = self
+                .load_tls_config(tls_config)
+                .context("Failed to load TLS configuration")?;
+
+            let handle = tokio::spawn(async move {
+                info!("S3 API server listening on {} (HTTPS)", addr);
+
+                let handle = axum_server::Handle::new();
+                let shutdown_handle = handle.clone();
+
+                // Spawn a task to handle graceful shutdown
+                tokio::spawn(async move {
+                    shutdown_rx.recv().await.ok();
+                    info!("S3 API server shutting down");
+                    shutdown_handle.shutdown();
+                });
+
+                let serve = axum_server::bind_rustls(addr, tls_config)
+                    .handle(handle)
+                    .serve(app.into_make_service());
+
+                if let Err(e) = serve.await {
+                    error!("S3 server error: {}", e);
+                }
+            });
+
+            Ok(handle)
+        } else {
+            info!("Starting S3 API server without TLS on {}", addr);
+
+            let listener = tokio::net::TcpListener::bind(addr)
+                .await
+                .context("Failed to bind S3 server")?;
+
+            let handle = tokio::spawn(async move {
+                info!("S3 API server listening on {} (HTTP)", addr);
+
+                let serve = axum::serve(listener, app).with_graceful_shutdown(async move {
                     shutdown_rx.recv().await.ok();
                     info!("S3 API server shutting down");
                 });
 
-            if let Err(e) = serve.await {
-                error!("S3 server error: {}", e);
-            }
-        });
+                if let Err(e) = serve.await {
+                    error!("S3 server error: {}", e);
+                }
+            });
 
-        Ok(handle)
+            Ok(handle)
+        }
     }
 
     /// Start the gRPC server for internal cluster communication
     async fn start_grpc_server(&self) -> Result<JoinHandle<()>> {
-        let addr: SocketAddr = self.config.node.grpc_addr
+        let addr: SocketAddr = self
+            .config
+            .node
+            .grpc_addr
             .parse()
             .context("Invalid gRPC bind address")?;
 
@@ -199,7 +266,10 @@ impl Server {
 
     /// Start the admin/metrics API server
     async fn start_admin_server(&self) -> Result<JoinHandle<()>> {
-        let addr: SocketAddr = self.config.node.admin_addr
+        let addr: SocketAddr = self
+            .config
+            .node
+            .admin_addr
             .parse()
             .context("Invalid admin bind address")?;
 
@@ -210,6 +280,7 @@ impl Server {
             cluster_manager: self.cluster_manager.clone(),
             metrics: self.metrics.clone(),
             raft: self.raft.clone(),
+            keystore: self.keystore.clone(),
         };
 
         let app = admin_router(state);
@@ -223,11 +294,10 @@ impl Server {
         let handle = tokio::spawn(async move {
             info!("Admin API server listening on {}", addr);
 
-            let serve = axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    shutdown_rx.recv().await.ok();
-                    info!("Admin API server shutting down");
-                });
+            let serve = axum::serve(listener, app).with_graceful_shutdown(async move {
+                shutdown_rx.recv().await.ok();
+                info!("Admin API server shutting down");
+            });
 
             if let Err(e) = serve.await {
                 error!("Admin server error: {}", e);
@@ -241,13 +311,12 @@ impl Server {
     pub async fn bootstrap_cluster(&self) -> Result<()> {
         info!("Bootstrapping new Raft cluster");
 
-        let mut nodes = HashMap::new();
+        let mut nodes = BTreeMap::new();
         nodes.insert(
             self.config.node.id,
-            anode_raft::network::Node {
+            openraft::BasicNode {
                 addr: self.config.node.grpc_addr.clone(),
-                data: Default::default(),
-            }
+            },
         );
 
         self.raft
@@ -255,7 +324,10 @@ impl Server {
             .await
             .context("Failed to initialize Raft cluster")?;
 
-        info!("Cluster bootstrapped successfully, node {} is leader", self.config.node.id);
+        info!(
+            "Cluster bootstrapped successfully, node {} is leader",
+            self.config.node.id
+        );
         Ok(())
     }
 
@@ -313,15 +385,114 @@ impl Server {
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         shutdown_rx.recv().await.ok();
     }
+
+    /// Load TLS configuration from certificate and key files
+    fn load_tls_config(
+        &self,
+        tls_config: &crate::config::TlsConfig,
+    ) -> Result<axum_server::tls_rustls::RustlsConfig> {
+        use std::fs::File;
+        use std::io::BufReader;
+
+        // Install default crypto provider if not already set
+        // This is required for rustls 0.23+
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        info!("Loading TLS certificates");
+
+        // Read certificate file
+        let cert_file = File::open(&tls_config.cert_file).with_context(|| {
+            format!(
+                "Failed to open certificate file: {:?}",
+                tls_config.cert_file
+            )
+        })?;
+        let mut cert_reader = BufReader::new(cert_file);
+
+        let certs = rustls_pemfile::certs(&mut cert_reader)
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to parse certificate file")?;
+
+        if certs.is_empty() {
+            return Err(anyhow::anyhow!("No certificates found in certificate file"));
+        }
+
+        // Read private key file
+        let key_file = File::open(&tls_config.key_file).with_context(|| {
+            format!("Failed to open private key file: {:?}", tls_config.key_file)
+        })?;
+        let mut key_reader = BufReader::new(key_file);
+
+        let private_key = rustls_pemfile::private_key(&mut key_reader)
+            .context("Failed to parse private key file")?
+            .ok_or_else(|| anyhow::anyhow!("No private key found in key file"))?;
+
+        // Build rustls server config
+        let mut server_config = if let Some(ref ca_file) = tls_config.ca_file {
+            info!("Loading CA certificate for client authentication");
+
+            let ca_file = File::open(ca_file)
+                .with_context(|| format!("Failed to open CA file: {:?}", ca_file))?;
+            let mut ca_reader = BufReader::new(ca_file);
+
+            let ca_certs = rustls_pemfile::certs(&mut ca_reader)
+                .collect::<Result<Vec<_>, _>>()
+                .context("Failed to parse CA certificate file")?;
+
+            if ca_certs.is_empty() {
+                return Err(anyhow::anyhow!("No CA certificates found in CA file"));
+            }
+
+            let mut root_cert_store = rustls::RootCertStore::empty();
+            for cert in ca_certs {
+                root_cert_store
+                    .add(cert)
+                    .context("Failed to add CA certificate to root store")?;
+            }
+
+            let client_cert_verifier = if tls_config.require_client_cert {
+                rustls::server::WebPkiClientVerifier::builder(root_cert_store.into())
+                    .build()
+                    .context("Failed to build client certificate verifier")?
+            } else {
+                rustls::server::WebPkiClientVerifier::builder(root_cert_store.into())
+                    .allow_unauthenticated()
+                    .build()
+                    .context("Failed to build client certificate verifier")?
+            };
+
+            rustls::ServerConfig::builder()
+                .with_client_cert_verifier(client_cert_verifier)
+                .with_single_cert(certs, private_key)
+                .context("Failed to build TLS server configuration")?
+        } else {
+            rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(certs, private_key)
+                .context("Failed to build TLS server configuration")?
+        };
+
+        // Enable HTTP/2 and HTTP/1.1
+        server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+        info!("TLS configuration loaded successfully");
+
+        Ok(axum_server::tls_rustls::RustlsConfig::from_config(
+            std::sync::Arc::new(server_config),
+        ))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_server_creation() {
-        let config = Config::default();
+        let temp_dir = TempDir::new().unwrap();
+        let mut config = Config::default();
+        config.storage.data_dir = temp_dir.path().to_path_buf();
         let server = Server::new(config).await;
         assert!(server.is_ok());
     }

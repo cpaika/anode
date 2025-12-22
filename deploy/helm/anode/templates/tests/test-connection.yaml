@@ -10,16 +10,16 @@ metadata:
 spec:
   restartPolicy: Never
   containers:
-  - name: test-s3-health
+  - name: test-s3-connectivity
     image: curlimages/curl:latest
     command:
     - /bin/sh
     - -c
     - |
       set -e
-      echo "Testing S3 API health endpoint..."
-      curl -f -s http://{{ include "anode.fullname" . }}:{{ .Values.service.s3Port }}/health || exit 1
-      echo "S3 API health check passed!"
+      echo "Testing S3 API connectivity (ListBuckets)..."
+      curl -f -s http://{{ include "anode.fullname" . }}:{{ .Values.service.s3Port }}/ || exit 1
+      echo "S3 API connectivity check passed!"
 
   - name: test-admin-health
     image: curlimages/curl:latest
@@ -40,5 +40,5 @@ spec:
     - |
       set -e
       echo "Testing metrics endpoint..."
-      curl -f -s http://{{ include "anode.fullname" . }}:{{ .Values.service.adminPort }}{{ .Values.config.metrics.path }} | grep -q "anode_" || exit 1
+      curl -f -s http://{{ include "anode.fullname" . }}:{{ .Values.service.adminPort }}/metrics | grep -q "anode_" || exit 1
       echo "Metrics endpoint check passed!"

@@ -4,28 +4,38 @@ use anode_s3::{
     batch::{BatchHandler, ObjectIdentifier},
     copy::{CopyHandler, CopyOptions, MetadataDirective},
 };
-use anode_storage::StorageEngine;
+use anode_storage::{BucketConfig, StorageEngine};
 use bytes::Bytes;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tempfile::TempDir;
 
-/// Helper to create a test storage engine
-async fn create_test_storage() -> (Arc<StorageEngine>, TempDir) {
+/// Helper to create a test storage engine with buckets
+async fn create_test_storage_with_buckets(bucket_names: &[&str]) -> (Arc<StorageEngine>, TempDir) {
     let temp_dir = TempDir::new().unwrap();
-    let storage = StorageEngine::new(temp_dir.path()).await.unwrap();
-    (Arc::new(storage), temp_dir)
+    let config = anode_storage::StorageConfig::new(temp_dir.path().to_path_buf());
+    let storage = Arc::new(StorageEngine::open(config).await.unwrap());
+
+    // Create all required buckets
+    for name in bucket_names {
+        storage
+            .create_bucket(name, BucketConfig::new(*name))
+            .await
+            .unwrap();
+    }
+
+    (storage, temp_dir)
 }
 
 #[tokio::test]
 async fn test_copy_within_bucket() {
-    let (storage, _temp_dir) = create_test_storage().await;
+    let (storage, _temp_dir) = create_test_storage_with_buckets(&["test-bucket"]).await;
 
     // Create test object
     let source_key = ObjectKey::new("test-bucket", "source.txt");
     let data = Bytes::from("test data for copy");
     storage
-        .put_object(source_key.clone(), data.clone(), None)
+        .put_object("test-bucket", "source.txt", &data, BTreeMap::new())
         .await
         .unwrap();
 
@@ -48,19 +58,24 @@ async fn test_copy_within_bucket() {
 
     // Verify destination object exists
     let dest_key = ObjectKey::new("test-bucket", "dest.txt");
-    let copied_data = storage.get_object(&dest_key).await.unwrap();
-    assert_eq!(copied_data, data);
+    let (_manifest, copied_data) = storage
+        .get_object("test-bucket", "dest.txt")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(copied_data, data.to_vec());
 }
 
 #[tokio::test]
 async fn test_copy_across_buckets() {
-    let (storage, _temp_dir) = create_test_storage().await;
+    let (storage, _temp_dir) =
+        create_test_storage_with_buckets(&["source-bucket", "dest-bucket"]).await;
 
     // Create test object in source bucket
     let source_key = ObjectKey::new("source-bucket", "file.txt");
     let data = Bytes::from("cross-bucket copy test");
     storage
-        .put_object(source_key.clone(), data.clone(), None)
+        .put_object("source-bucket", "file.txt", &data, BTreeMap::new())
         .await
         .unwrap();
 
@@ -81,27 +96,31 @@ async fn test_copy_across_buckets() {
 
     // Verify destination object exists
     let dest_key = ObjectKey::new("dest-bucket", "file.txt");
-    let copied_data = storage.get_object(&dest_key).await.unwrap();
-    assert_eq!(copied_data, data);
+    let (_manifest, copied_data) = storage
+        .get_object("dest-bucket", "file.txt")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(copied_data, data.to_vec());
 }
 
 #[tokio::test]
 async fn test_copy_with_metadata_replace() {
-    let (storage, _temp_dir) = create_test_storage().await;
+    let (storage, _temp_dir) = create_test_storage_with_buckets(&["test-bucket"]).await;
 
     // Create test object
     let source_key = ObjectKey::new("test-bucket", "source.txt");
     let data = Bytes::from("test data");
-    let mut original_metadata = HashMap::new();
+    let mut original_metadata = BTreeMap::new();
     original_metadata.insert("original".to_string(), "value".to_string());
 
     storage
-        .put_object(source_key.clone(), data.clone(), Some(original_metadata))
+        .put_object("test-bucket", "source.txt", &data, original_metadata)
         .await
         .unwrap();
 
     // Copy with new metadata
-    let mut new_metadata = HashMap::new();
+    let mut new_metadata = BTreeMap::new();
     new_metadata.insert("new-key".to_string(), "new-value".to_string());
 
     let mut options = CopyOptions::default();
@@ -125,13 +144,13 @@ async fn test_copy_with_metadata_replace() {
 
 #[tokio::test]
 async fn test_copy_with_conditional_match() {
-    let (storage, _temp_dir) = create_test_storage().await;
+    let (storage, _temp_dir) = create_test_storage_with_buckets(&["test-bucket"]).await;
 
     // Create test object
     let source_key = ObjectKey::new("test-bucket", "source.txt");
     let data = Bytes::from("test data");
     let manifest = storage
-        .put_object(source_key.clone(), data.clone(), None)
+        .put_object("test-bucket", "source.txt", &data, BTreeMap::new())
         .await
         .unwrap();
 
@@ -156,13 +175,13 @@ async fn test_copy_with_conditional_match() {
 
 #[tokio::test]
 async fn test_copy_with_conditional_no_match() {
-    let (storage, _temp_dir) = create_test_storage().await;
+    let (storage, _temp_dir) = create_test_storage_with_buckets(&["test-bucket"]).await;
 
     // Create test object
     let source_key = ObjectKey::new("test-bucket", "source.txt");
     let data = Bytes::from("test data");
     storage
-        .put_object(source_key.clone(), data.clone(), None)
+        .put_object("test-bucket", "source.txt", &data, BTreeMap::new())
         .await
         .unwrap();
 
@@ -186,12 +205,13 @@ async fn test_copy_with_conditional_no_match() {
 
 #[tokio::test]
 async fn test_batch_delete_single_object() {
-    let (storage, _temp_dir) = create_test_storage().await;
+    let (storage, _temp_dir) = create_test_storage_with_buckets(&["test-bucket"]).await;
 
     // Create test object
     let key = ObjectKey::new("test-bucket", "file1.txt");
+    let data = Bytes::from("data1");
     storage
-        .put_object(key.clone(), Bytes::from("data1"), None)
+        .put_object("test-bucket", "file1.txt", &data, BTreeMap::new())
         .await
         .unwrap();
 
@@ -207,20 +227,25 @@ async fn test_batch_delete_single_object() {
     assert_eq!(result.errors.len(), 0);
     assert_eq!(result.deleted[0].key, "file1.txt");
 
-    // Verify object is deleted
-    let get_result = storage.get_object(&key).await;
-    assert!(get_result.is_err());
+    // Verify object is deleted (get_object returns Ok(None) for non-existent objects)
+    let get_result = storage.get_object("test-bucket", "file1.txt").await.unwrap();
+    assert!(get_result.is_none());
 }
 
 #[tokio::test]
 async fn test_batch_delete_multiple_objects() {
-    let (storage, _temp_dir) = create_test_storage().await;
+    let (storage, _temp_dir) = create_test_storage_with_buckets(&["test-bucket"]).await;
 
     // Create test objects
     for i in 1..=5 {
-        let key = ObjectKey::new("test-bucket", &format!("file{}.txt", i));
+        let data = format!("data{}", i);
         storage
-            .put_object(key, Bytes::from(format!("data{}", i)), None)
+            .put_object(
+                "test-bucket",
+                &format!("file{}.txt", i),
+                data.as_bytes(),
+                BTreeMap::new(),
+            )
             .await
             .unwrap();
     }
@@ -240,23 +265,28 @@ async fn test_batch_delete_multiple_objects() {
     assert_eq!(result.errors.len(), 0);
     assert!(result.is_success());
 
-    // Verify all objects are deleted
+    // Verify all objects are deleted (get_object returns Ok(None) for non-existent objects)
     for i in 1..=5 {
-        let key = ObjectKey::new("test-bucket", &format!("file{}.txt", i));
-        let get_result = storage.get_object(&key).await;
-        assert!(get_result.is_err());
+        let key_name = format!("file{}.txt", i);
+        let get_result = storage.get_object("test-bucket", &key_name).await.unwrap();
+        assert!(get_result.is_none());
     }
 }
 
 #[tokio::test]
 async fn test_batch_delete_quiet_mode() {
-    let (storage, _temp_dir) = create_test_storage().await;
+    let (storage, _temp_dir) = create_test_storage_with_buckets(&["test-bucket"]).await;
 
     // Create test objects
     for i in 1..=3 {
-        let key = ObjectKey::new("test-bucket", &format!("file{}.txt", i));
+        let data = format!("data{}", i);
         storage
-            .put_object(key, Bytes::from(format!("data{}", i)), None)
+            .put_object(
+                "test-bucket",
+                &format!("file{}.txt", i),
+                data.as_bytes(),
+                BTreeMap::new(),
+            )
             .await
             .unwrap();
     }
@@ -279,7 +309,7 @@ async fn test_batch_delete_quiet_mode() {
 
 #[tokio::test]
 async fn test_batch_delete_nonexistent_objects() {
-    let (storage, _temp_dir) = create_test_storage().await;
+    let (storage, _temp_dir) = create_test_storage_with_buckets(&["test-bucket"]).await;
 
     // Try to delete objects that don't exist
     let handler = BatchHandler::new(storage.clone());
@@ -300,12 +330,13 @@ async fn test_batch_delete_nonexistent_objects() {
 
 #[tokio::test]
 async fn test_batch_delete_partial_failures() {
-    let (storage, _temp_dir) = create_test_storage().await;
+    let (storage, _temp_dir) = create_test_storage_with_buckets(&["test-bucket"]).await;
 
     // Create some objects
     let key1 = ObjectKey::new("test-bucket", "exists.txt");
+    let data = Bytes::from("data");
     storage
-        .put_object(key1, Bytes::from("data"), None)
+        .put_object("test-bucket", "exists.txt", &data, BTreeMap::new())
         .await
         .unwrap();
 
@@ -328,12 +359,13 @@ async fn test_batch_delete_partial_failures() {
 
 #[tokio::test]
 async fn test_batch_delete_with_version_id() {
-    let (storage, _temp_dir) = create_test_storage().await;
+    let (storage, _temp_dir) = create_test_storage_with_buckets(&["test-bucket"]).await;
 
     // Create test object
     let key = ObjectKey::new("test-bucket", "versioned.txt");
+    let data = Bytes::from("data");
     storage
-        .put_object(key.clone(), Bytes::from("data"), None)
+        .put_object("test-bucket", "versioned.txt", &data, BTreeMap::new())
         .await
         .unwrap();
 
@@ -353,13 +385,18 @@ async fn test_batch_delete_with_version_id() {
 
 #[tokio::test]
 async fn test_delete_result_counts() {
-    let (storage, _temp_dir) = create_test_storage().await;
+    let (storage, _temp_dir) = create_test_storage_with_buckets(&["test-bucket"]).await;
 
     // Create test objects
     for i in 1..=10 {
-        let key = ObjectKey::new("test-bucket", &format!("file{}.txt", i));
+        let data = format!("data{}", i);
         storage
-            .put_object(key, Bytes::from(format!("data{}", i)), None)
+            .put_object(
+                "test-bucket",
+                &format!("file{}.txt", i),
+                data.as_bytes(),
+                BTreeMap::new(),
+            )
             .await
             .unwrap();
     }

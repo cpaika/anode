@@ -1,701 +1,1027 @@
 # Anode Architecture
 
-## Overview
+This document provides a comprehensive overview of the Anode distributed object storage system architecture, including component relationships, data flows, and key design decisions.
 
-Anode is a Rust-based distributed object storage system designed for small clusters (3-50 nodes). It provides S3-compatible object storage with strong consistency guarantees, built on a unified architecture where every node runs the same binary with identical capabilities.
+## Table of Contents
 
-### Key Design Principles
+- [System Overview](#system-overview)
+- [Component Architecture](#component-architecture)
+- [Data Flow](#data-flow)
+- [Request Lifecycle](#request-lifecycle)
+- [Consensus and Replication](#consensus-and-replication)
+- [Storage Layer Design](#storage-layer-design)
+- [Cluster Architecture](#cluster-architecture)
+- [Design Decisions](#design-decisions)
+- [Extension Points](#extension-points)
 
-- **Unified Node Architecture**: Every node runs the same binary containing S3 API, Raft consensus, and storage engine
+## System Overview
+
+Anode is a distributed, S3-compatible object storage system designed for small to medium clusters (3-50 nodes). It combines strong consistency guarantees through Raft consensus with content-addressed storage and Parquet-aware optimizations for analytical workloads.
+
+### Key Characteristics
+
+- **Unified Architecture**: Every node runs the same binary containing S3 API, Raft consensus, and storage engine
 - **Strong Consistency**: Raft consensus ensures linearizable reads and writes
-- **Content-Addressed Storage**: SHA-256 based deduplication at the chunk level
-- **Parquet-Aware**: Special optimizations for analytical workloads reading Parquet files
-- **Pure Rust**: Memory-safe implementation with ACID guarantees
+- **Content-Addressed Storage**: SHA-256 based deduplication at 4MB chunk granularity
+- **Pure Rust**: Memory-safe implementation with zero-cost abstractions
+- **Parquet Optimized**: Metadata caching, predicate pushdown, and column pruning
 
-## System Components
-
-### 1. Unified Node Architecture
-
-Unlike traditional object storage systems with separate gateway and storage nodes, Anode uses a unified architecture:
+### High-Level Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│           Anode Node                     │
-│  ┌────────────────────────────────────┐ │
-│  │    S3 HTTP API (Axum)              │ │ :8080
-│  │  ├─ Authentication (AWS SigV4)     │ │
-│  │  ├─ Bucket Operations              │ │
-│  │  └─ Object Operations              │ │
-│  └────────────────────────────────────┘ │
-│                  ↓                       │
-│  ┌────────────────────────────────────┐ │
-│  │    Raft Consensus (OpenRaft)       │ │ :9090
-│  │  ├─ State Machine                  │ │
-│  │  ├─ Log Replication                │ │
-│  │  └─ Placement Groups                │ │
-│  └────────────────────────────────────┘ │
-│                  ↓                       │
-│  ┌────────────────────────────────────┐ │
-│  │    Storage Engine                   │ │
-│  │  ├─ Metadata (redb)                │ │
-│  │  ├─ Blobs (file-based)             │ │
-│  │  └─ Chunk Deduplication            │ │
-│  └────────────────────────────────────┘ │
-│                                          │
-│  Admin/Metrics API :8081                 │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                    Anode Node                            │
+│                                                           │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │         S3-Compatible API Layer                  │   │ Port 8080
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────────┐ │   │
+│  │  │ Buckets  │  │ Objects  │  │  Multipart   │ │   │
+│  │  └──────────┘  └──────────┘  └──────────────┘ │   │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────────┐ │   │
+│  │  │  Batch   │  │   Copy   │  │     Auth     │ │   │
+│  │  └──────────┘  └──────────┘  └──────────────┘ │   │
+│  └─────────────────────────────────────────────────┘   │
+│                         ↓                                │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │         Raft Consensus Layer                     │   │ Port 9090
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────────┐ │   │
+│  │  │   Log    │  │  State   │  │   Network    │ │   │
+│  │  │  Store   │  │ Machine  │  │   Manager    │ │   │
+│  │  └──────────┘  └──────────┘  └──────────────┘ │   │
+│  └─────────────────────────────────────────────────┘   │
+│                         ↓                                │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │         Storage Engine                           │   │
+│  │  ┌──────────────────────────────────────────┐  │   │
+│  │  │  Metadata Store (redb)                   │  │   │
+│  │  │  - Buckets & Objects                     │  │   │
+│  │  │  - Chunk References                      │  │   │
+│  │  │  - Reference Counts                      │  │   │
+│  │  └──────────────────────────────────────────┘  │   │
+│  │  ┌──────────────────────────────────────────┐  │   │
+│  │  │  Blob Store (file-based)                 │  │   │
+│  │  │  - Content-Addressed Chunks              │  │   │
+│  │  │  - SHA-256 Deduplication                 │  │   │
+│  │  └──────────────────────────────────────────┘  │   │
+│  │  ┌──────────────────────────────────────────┐  │   │
+│  │  │  Chunk Manager                           │  │   │
+│  │  │  - Chunking (4MB)                        │  │   │
+│  │  │  - Integrity Verification                │  │   │
+│  │  │  - Garbage Collection                    │  │   │
+│  │  └──────────────────────────────────────────┘  │   │
+│  └─────────────────────────────────────────────────┘   │
+│                                                           │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │      Support Services                            │   │ Port 8081
+│  │  ┌────────┐  ┌────────┐  ┌─────────────────┐  │   │
+│  │  │ Health │  │ Metrics│  │ Admin/Cluster   │  │   │
+│  │  └────────┘  └────────┘  └─────────────────┘  │   │
+│  └─────────────────────────────────────────────────┘   │
+│                                                           │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │      Parquet Support                             │   │
+│  │  ┌──────────────┐  ┌────────────────────────┐  │   │
+│  │  │   Metadata   │  │      Optimizer         │  │   │
+│  │  │    Cache     │  │  - Predicate Pushdown  │  │   │
+│  │  │   (256MB)    │  │  - Column Pruning      │  │   │
+│  │  └──────────────┘  └────────────────────────┘  │   │
+│  └─────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
 ```
 
-**Benefits of Unified Architecture:**
-- Simplified deployment and operations
-- No complex role-based configuration
-- Automatic load balancing (any node handles any request)
-- Easy horizontal scaling (add more identical nodes)
-- Reduced operational complexity
+## Component Architecture
 
-### 2. Storage Engine
+### 1. S3 API Layer (`crates/anode-s3`)
 
-The storage engine consists of three main components working together:
+The S3 API layer provides S3-compatible HTTP endpoints using Axum web framework.
 
-#### 2.1 Metadata Store (redb)
+**Responsibilities:**
+- Parse and validate S3 HTTP requests
+- AWS Signature V4 authentication
+- XML request/response serialization
+- Route requests to storage engine
+- Handle multipart uploads
+- Implement batch operations
 
-Uses **redb**, a pure Rust embedded database with ACID guarantees:
+**Key Modules:**
+- `handlers.rs` - Core S3 operation handlers (GET, PUT, DELETE, HEAD, LIST)
+- `auth.rs` - AWS SigV4 authentication
+- `multipart.rs` - Multipart upload management
+- `batch.rs` - Batch delete operations
+- `copy.rs` - Server-side object copy
+- `xml.rs` - S3 XML response generation
+- `router.rs` - HTTP routing and middleware
 
-**Tables:**
-- `objects`: Maps object keys to manifests
-- `buckets`: Bucket metadata and configuration
-- `chunks`: Chunk reference counting for garbage collection
+**Dependencies:**
+- `anode-storage` - Storage operations
+- `axum` - Web framework
+- `tower` - HTTP middleware
 
-**Key Features:**
-- ACID transactions
-- Zero-copy reads
-- Crash-safe (write-ahead logging)
-- Memory-mapped I/O for performance
+### 2. Raft Consensus Layer (`crates/anode-raft`)
 
-**Data Model:**
-```rust
-ObjectManifest {
-    object_key: ObjectKey,
-    size: u64,
-    chunks: Vec<ChunkId>,        // SHA-256 content addresses
-    content_type: Option<String>,
-    metadata: HashMap<String, String>,
-    created_at: u64,
-    modified_at: u64,
-    etag: String,
-}
-```
+Provides distributed consensus using OpenRaft, ensuring strong consistency across the cluster.
 
-#### 2.2 Blob Storage
+**Responsibilities:**
+- Leader election
+- Log replication
+- Snapshot management
+- Membership changes
+- Network communication between nodes
 
-Content-addressed file-based storage for object data:
+**Key Components:**
+- `LogStore` - Persistent Raft log using redb
+- `StateMachine` - Applies committed operations to storage
+- `RaftNetworkManager` - gRPC-based inter-node communication
+- `RaftConfig` - Configuration management
 
-**Directory Layout:**
-```
-data/
-├── blobs/
-│   ├── ab/
-│   │   ├── cd/
-│   │   │   └── abcdef123456...  # SHA-256 hash
-│   │   └── ef/
-│   └── 12/
-└── metadata/
-    └── store.redb
-```
+**Raft Operations:**
+- Bucket creation/deletion (replicated)
+- Object metadata operations (replicated)
+- Cluster membership changes (replicated)
+- Chunk reference counting (local, eventually consistent)
 
-**Chunk Management:**
-- Default chunk size: 4MB (configurable)
-- SHA-256 content addressing
-- Automatic deduplication
-- Reference counting for garbage collection
+**Design Note:** The storage engine handles chunk-level operations locally without Raft coordination, while metadata operations go through Raft for consistency.
 
-**Storage Path Calculation:**
-```
-ChunkId: abcdef123456789...
-Path: data/blobs/ab/cd/abcdef123456789...
-      └─ First 2 chars ──┘
-         └─ Next 2 chars ─┘
-```
+### 3. Storage Engine (`crates/anode-storage`)
 
-#### 2.3 Chunk Deduplication
+Core storage implementation with content-addressed chunking and deduplication.
 
-Content-addressed storage eliminates duplicate data:
+**Architecture:**
 
 ```
-Object A: [Chunk1, Chunk2, Chunk3]
-Object B: [Chunk2, Chunk4, Chunk5]
-          └─ Shared chunk (stored once)
-
-Storage:
-- Chunk1 (ref_count: 1)
-- Chunk2 (ref_count: 2)  ← Deduplicated
-- Chunk3 (ref_count: 1)
-- Chunk4 (ref_count: 1)
-- Chunk5 (ref_count: 1)
+┌─────────────────────────────────────────────────────┐
+│              StorageEngine                           │
+├─────────────────────────────────────────────────────┤
+│                                                       │
+│  ┌──────────────────────────────────────────────┐  │
+│  │  MetadataStore (redb - ACID compliant)       │  │
+│  │                                               │  │
+│  │  Tables:                                      │  │
+│  │  - buckets:      bucket_name → BucketConfig  │  │
+│  │  - objects:      (bucket, key) → Manifest    │  │
+│  │  - chunk_refs:   chunk_id → ref_count        │  │
+│  │  - chunk_sizes:  chunk_id → size             │  │
+│  └──────────────────────────────────────────────┘  │
+│                                                       │
+│  ┌──────────────────────────────────────────────┐  │
+│  │  ChunkManager                                 │  │
+│  │                                               │  │
+│  │  - Split data into 4MB chunks                │  │
+│  │  - Compute SHA-256 for each chunk            │  │
+│  │  - Deduplicate based on chunk ID             │  │
+│  │  - Manage reference counts                   │  │
+│  │  - Garbage collection                        │  │
+│  │  - Integrity verification                    │  │
+│  └──────────────────────────────────────────────┘  │
+│                                                       │
+│  ┌──────────────────────────────────────────────┐  │
+│  │  BlobStore (file-based)                      │  │
+│  │                                               │  │
+│  │  Directory structure:                         │  │
+│  │  data_dir/blobs/ab/cd/abcd1234...            │  │
+│  │  (2-level hierarchy for filesystem scaling)  │  │
+│  │                                               │  │
+│  │  - Write chunks atomically                   │  │
+│  │  - Read by chunk ID                          │  │
+│  │  - Verify on read                            │  │
+│  │  - Delete unreferenced chunks                │  │
+│  └──────────────────────────────────────────────┘  │
+│                                                       │
+│  ┌──────────────────────────────────────────────┐  │
+│  │  Integrity & Repair Systems                  │  │
+│  │                                               │  │
+│  │  - IntegrityChecker: Verify chunk hashes     │  │
+│  │  - RepairManager: Restore from replicas      │  │
+│  │  - Scrubber: Background verification         │  │
+│  └──────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────┘
 ```
 
-**Garbage Collection:**
-- When object is deleted, chunk ref_count decreases
-- When ref_count reaches 0, chunk is eligible for deletion
-- Background GC process removes unreferenced chunks
+**Responsibilities:**
+- Object CRUD operations
+- Chunk splitting and reassembly
+- Content-addressed storage
+- Deduplication via reference counting
+- Integrity verification
+- Garbage collection
 
-### 3. Raft Consensus
+**Key Modules:**
+- `engine.rs` - Main storage interface
+- `chunks.rs` - Chunking and deduplication logic
+- `blobs.rs` - File-based chunk storage
+- `metadata.rs` - redb-based metadata management
+- `integrity.rs` - Hash verification
+- `repair.rs` - Data recovery from replicas
+- `scrubber.rs` - Background integrity checks
 
-Built on **openraft**, a feature-complete Raft implementation:
+### 4. Protocol Layer (`crates/anode-protocol`)
 
-#### 3.1 Core Raft Operations
+Defines gRPC protocol buffers for inter-node communication.
 
-**Leader Election:**
-- Heartbeat interval: 1000ms (configurable)
-- Election timeout: 3000ms (configurable)
-- Leader handles all writes
+**Services:**
+- `ClusterService` - Node join/leave, cluster status
+- `RaftService` - Raft RPC (AppendEntries, RequestVote, etc.)
+- `ReplicationService` - Chunk replication and verification
 
-**Log Replication:**
-- Write operations committed to Raft log
-- Replicated to majority before acknowledgment
-- State machine applies committed entries
+**Common Types:**
+- `NodeId` - Unique node identifier
+- `ChunkId` - SHA-256 hash of chunk data
+- `ObjectKey` - Bucket + object path
+- `ObjectManifest` - List of chunk IDs composing an object
 
-**State Machine:**
-```rust
-enum Request {
-    PutObject { key, data, metadata },
-    DeleteObject { key },
-    CreateBucket { name },
-    DeleteBucket { name },
-    UpdateMetadata { key, metadata },
-}
-```
+### 5. Client Library (`crates/anode-client`)
 
-#### 3.2 Placement Groups
+Rust SDK for interacting with Anode clusters.
 
-Data is partitioned into **placement groups** (PGs) for scalability:
-
-**Purpose:**
-- Horizontal scaling beyond single Raft group limits
-- Parallel processing of requests
-- Isolation of failure domains
-
-**Assignment:**
-```
-Bucket + Key → Hash → PG ID → Raft Group → Leader Node
-```
-
-**Configuration:**
-- Default: 128 placement groups
-- Each PG is an independent Raft cluster
-- Consistent hashing for key distribution
+**Features:**
+- Full S3 API support
+- Async/await with Tokio
+- AWS SigV4 signing
+- Automatic retry with exponential backoff
+- Streaming uploads/downloads
+- Multipart upload helpers
+- Presigned URLs
+- Fluent builder APIs
 
 **Example:**
-```
-PG 0:  Node1 (L), Node2 (F), Node3 (F)
-PG 1:  Node2 (L), Node3 (F), Node1 (F)
-PG 2:  Node3 (L), Node1 (F), Node2 (F)
-...
-PG 127: Node1 (L), Node2 (F), Node3 (F)
-
-L = Leader, F = Follower
+```rust
+let client = AnodeClient::new(config)?;
+client.create_bucket("my-bucket").await?;
+client.put_object("my-bucket", "key", data).await?;
 ```
 
-### 4. S3 API Layer
+### 6. Parquet Support (`crates/anode-parquet`)
 
-Implements S3-compatible HTTP API using Axum web framework:
+Optimizations for Apache Parquet analytical workloads.
 
-#### 4.1 Supported Operations
+**Features:**
+- Metadata extraction and caching
+- Row group statistics parsing
+- Predicate pushdown (filter optimization)
+- Column pruning (projection optimization)
+- LRU cache (256MB default)
 
-**Bucket Operations:**
-- CreateBucket
-- DeleteBucket (must be empty)
-- ListBuckets
-- HeadBucket
-
-**Object Operations:**
-- PutObject
-- GetObject
-- DeleteObject
-- HeadObject
-- CopyObject
-- ListObjectsV2
-
-**Multipart Upload:**
-- CreateMultipartUpload
-- UploadPart
-- CompleteMultipartUpload
-- AbortMultipartUpload
-- ListMultipartUploads
-- ListParts
-
-**Advanced Features:**
-- Range requests (partial downloads)
-- Conditional requests (If-Match, If-None-Match)
-- Object metadata
-- Object tagging
-- Presigned URLs
-
-#### 4.2 Authentication
-
-AWS Signature Version 4 (SigV4):
+**Optimization Flow:**
 ```
-Authorization: AWS4-HMAC-SHA256
-    Credential=AKIAIOSFODNN7EXAMPLE/20231219/us-east-1/s3/aws4_request,
-    SignedHeaders=host;x-amz-date,
-    Signature=<calculated signature>
+Query Request
+    ↓
+Check metadata cache
+    ↓
+If miss: Read Parquet footer (range request)
+    ↓
+Parse row group statistics
+    ↓
+Prune row groups based on predicates
+    ↓
+Prune columns based on projection
+    ↓
+Return minimal byte ranges to fetch
 ```
 
-**Signature Calculation:**
-1. Create canonical request
-2. Create string to sign
-3. Derive signing key
-4. Calculate signature
+### 7. Cluster Management (`crates/anode/src/cluster`)
 
-**Credential Storage:**
-- Access keys stored in metadata store
-- Secret keys hashed (bcrypt/argon2)
-- Support for multiple credentials per user
+Manages cluster topology and rebalancing.
 
-### 5. Parquet Optimization
+**Components:**
+- `ClusterManager` - Coordinates cluster operations
+- `MembershipManager` - Tracks node membership
+- `Discovery` - Node discovery mechanisms
+- `ClusterBootstrap` - Initial cluster formation
+- `Rebalancer` - Data rebalancing across nodes
 
-Special features for analytical workloads:
+**Placement Groups:**
+- 128 virtual placement groups by default
+- Objects assigned to placement groups via hash
+- Placement groups distributed across nodes
+- Enables incremental rebalancing when nodes join/leave
 
-#### 5.1 Metadata Caching
+## Data Flow
 
-Parquet files contain rich metadata in the footer:
-- Schema information
-- Row group metadata
-- Column statistics (min/max, null count)
-- Page indexes
-- Bloom filters
+### Write Path (PUT Object)
 
-**Caching Strategy:**
 ```
-Parquet File: 1GB
-Footer: 10KB (cached)
+1. Client → S3 API
+   ├─ Parse HTTP request
+   ├─ Validate AWS SigV4 signature
+   └─ Extract bucket, key, data
 
-Query: SELECT col1 FROM table WHERE col2 = 'value'
-1. Check cache for footer metadata
-2. Use statistics to prune row groups
-3. Fetch only relevant row groups
-4. Apply column projection (read only col1, col2)
+2. S3 API → Storage Engine
+   └─ engine.put_object(bucket, key, data, metadata)
+
+3. Storage Engine → Chunk Manager
+   ├─ Split data into 4MB chunks
+   ├─ Compute SHA-256 for each chunk
+   └─ Return Vec<Chunk>
+
+4. Chunk Manager → Blob Store (per chunk)
+   ├─ Check if chunk exists (deduplication)
+   ├─ If new: Write chunk to disk
+   └─ Increment reference count in metadata
+
+5. Storage Engine → Metadata Store
+   ├─ Create ObjectManifest (list of chunk IDs)
+   ├─ Store manifest in redb
+   └─ Update bucket listing
+
+6. Raft (asynchronously)
+   ├─ Replicate metadata change
+   ├─ Commit when majority acknowledges
+   └─ Apply to state machine
+
+7. Response → Client
+   └─ Return ETag (hash of manifest)
+```
+
+### Read Path (GET Object)
+
+```
+1. Client → S3 API
+   ├─ Parse HTTP request
+   ├─ Validate AWS SigV4 signature
+   └─ Extract bucket, key
+
+2. S3 API → Storage Engine
+   └─ engine.get_object(bucket, key)
+
+3. Storage Engine → Metadata Store
+   ├─ Look up ObjectManifest
+   └─ Return list of chunk IDs
+
+4. Storage Engine → Chunk Manager
+   └─ retrieve_chunks(chunk_ids)
+
+5. Chunk Manager → Blob Store (per chunk)
+   ├─ Read chunk from disk
+   ├─ Verify SHA-256 hash
+   └─ Return chunk data
+
+6. Chunk Manager
+   └─ Concatenate chunks into complete object
+
+7. Response → Client
+   └─ Stream object data with metadata
+```
+
+### Parquet-Optimized Read Path (GET with Range)
+
+```
+1. Client → S3 API (Range: bytes=X-Y)
+
+2. S3 API → Parquet Cache
+   ├─ Check if metadata cached
+   └─ If miss: Extract footer from object
+
+3. Parquet Optimizer
+   ├─ Parse row group statistics
+   ├─ Apply predicate pushdown (WHERE clauses)
+   ├─ Apply column pruning (SELECT columns)
+   └─ Calculate minimal byte ranges
+
+4. S3 API → Storage Engine (optimized ranges)
+   └─ get_object_range(bucket, key, offset, length)
+
+5. Storage Engine
+   ├─ Map byte range to chunks
+   ├─ Read only required chunks
+   ├─ Extract requested byte range
+   └─ Return partial object data
+
+6. Response → Client
+   └─ Return minimal data (5-10x reduction)
+```
+
+## Request Lifecycle
+
+### Complete S3 PUT Request Lifecycle
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ 1. HTTP Request arrives at S3 API (port 8080)            │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│ 2. Axum Router                                            │
+│    - Match route: PUT /{bucket}/{key}                    │
+│    - Extract path parameters                              │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│ 3. Authentication Middleware                              │
+│    - Parse Authorization header                           │
+│    - Verify AWS SigV4 signature                          │
+│    - Check access permissions                             │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│ 4. PUT Handler (anode-s3/handlers.rs)                   │
+│    - Parse request body                                   │
+│    - Extract metadata headers                             │
+│    - Validate bucket exists                               │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│ 5. Storage Engine (anode-storage/engine.rs)             │
+│    - StorageEngine::put_object()                         │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│ 6. Chunk Manager (anode-storage/chunks.rs)              │
+│    a. Split into chunks (4MB each)                        │
+│    b. Compute SHA-256 for each chunk                     │
+│    c. Check if chunk exists (deduplication)              │
+│    d. Write new chunks to blob store                     │
+│    e. Update reference counts                             │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│ 7. Blob Store (anode-storage/blobs.rs)                  │
+│    - Write chunk to: data_dir/blobs/ab/cd/abcd1234...   │
+│    - Use atomic rename for durability                    │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│ 8. Metadata Store (anode-storage/metadata.rs)           │
+│    - Create ObjectManifest                                │
+│    - Store in redb: objects table                        │
+│    - Update bucket listing                                │
+│    - Transaction commit (ACID)                            │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│ 9. Raft Replication (anode-raft)                        │
+│    - Propose metadata change to Raft                     │
+│    - Replicate to followers                               │
+│    - Wait for quorum acknowledgment                       │
+│    - Commit to state machine                              │
+└──────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────┐
+│ 10. Response                                              │
+│     - Generate ETag (hash of manifest)                   │
+│     - Build XML response                                  │
+│     - Return HTTP 200 OK                                  │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Error Handling
+
+At each stage, errors are converted to appropriate S3 error codes:
+- `NoSuchBucket` → 404
+- `AccessDenied` → 403
+- `InternalError` → 500
+- `InvalidArgument` → 400
+
+## Consensus and Replication
+
+### Raft Integration
+
+**What gets replicated through Raft:**
+- Bucket creation/deletion
+- Object metadata (manifests, not data)
+- Cluster membership changes
+
+**What doesn't go through Raft:**
+- Chunk data (replicated separately)
+- Chunk reference counts (local per node)
+- Read operations (served locally)
+
+### Replication Flow
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   Leader Node                            │
+├─────────────────────────────────────────────────────────┤
+│                                                           │
+│ 1. Receive write request                                 │
+│    ↓                                                      │
+│ 2. Write to local storage                                │
+│    ↓                                                      │
+│ 3. Propose to Raft log                                   │
+│    ├─→ Replicate to Follower 1                          │
+│    ├─→ Replicate to Follower 2                          │
+│    └─→ Replicate to Follower 3                          │
+│    ↓                                                      │
+│ 4. Wait for quorum (N/2 + 1)                            │
+│    ↓                                                      │
+│ 5. Commit log entry                                      │
+│    ↓                                                      │
+│ 6. Apply to state machine                                │
+│    ↓                                                      │
+│ 7. Acknowledge client                                    │
+│    ↓                                                      │
+│ 8. Background: Chunk replication                         │
+│    ├─→ Send chunks to placement group nodes             │
+│    └─→ Verify replication factor met                    │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Placement Groups
+
+Anode uses placement groups (PGs) for scalable data distribution:
+
+```
+128 Placement Groups (default)
+    ↓
+Hash(bucket + key) % 128 → PG ID
+    ↓
+PG assigned to replication_factor nodes
+    ↓
+Chunks stored on PG's assigned nodes
 ```
 
 **Benefits:**
-- Avoid reading entire file for metadata
-- Row group pruning (skip irrelevant data)
-- Column projection (read only needed columns)
-- Predicate pushdown (filter at storage layer)
+- Parallel replication across PGs
+- Incremental rebalancing (move PGs, not objects)
+- Reduced metadata overhead
+- Better load distribution
 
-#### 5.2 Query Optimization
+### Consistency Guarantees
 
-The optimizer provides hints for efficient Parquet reads:
+- **Metadata**: Linearizable (via Raft)
+- **Reads**: Read-after-write consistency
+- **Cross-object operations**: Eventually consistent
+- **Listing**: Snapshot isolation
+
+## Storage Layer Design
+
+### Content-Addressed Storage
+
+Every chunk is identified by its SHA-256 hash:
+
+```
+Data: "Hello, World!"
+   ↓
+SHA-256: a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e
+   ↓
+Chunk ID: a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e
+   ↓
+File path: blobs/a5/91/a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e
+```
+
+### Chunking Strategy
+
+**Why 4MB chunks?**
+- Balance between deduplication granularity and overhead
+- Good parallelization for network transfers
+- Reasonable memory usage for in-flight chunks
+- Aligns well with Parquet row group sizes (typically 64-128MB)
+
+**Algorithm:**
+```rust
+fn split_into_chunks(data: &[u8]) -> Vec<Chunk> {
+    let mut chunks = Vec::new();
+    let mut offset = 0;
+
+    while offset < data.len() {
+        let end = (offset + CHUNK_SIZE).min(data.len());
+        let chunk_data = &data[offset..end];
+        let chunk = Chunk::new(chunk_data.to_vec());
+        chunks.push(chunk);
+        offset = end;
+    }
+
+    chunks
+}
+```
+
+### Deduplication
+
+**Reference Counting:**
+```
+Chunk abcd1234...
+    ↓
+Referenced by:
+    - object1 (bucket1/file1.txt)
+    - object2 (bucket2/file2.txt)
+    - object3 (bucket1/backup/file1.txt)
+    ↓
+Reference count: 3
+    ↓
+On delete of object1: ref_count -= 1
+    ↓
+When ref_count reaches 0: Delete chunk
+```
+
+**Storage Savings:**
+- Identical files: ~100% deduplication
+- Similar files: 30-90% deduplication
+- Random data: ~0% deduplication
+
+### Garbage Collection
+
+**Mark and Sweep GC:**
+```
+1. Scan all chunks in blob store
+2. For each chunk:
+   - Get reference count from metadata
+   - If ref_count == 0: Mark for deletion
+3. Delete marked chunks
+4. Report freed space
+```
+
+**Triggering:**
+- Manual via admin API
+- Scheduled (e.g., nightly)
+- When storage threshold exceeded
+
+### Integrity Verification
+
+**Hash Verification:**
+```
+On read:
+1. Read chunk from disk
+2. Compute SHA-256 of data
+3. Compare with chunk ID
+4. If mismatch: Attempt repair from replica
+5. If repair fails: Return error
+```
+
+**Background Scrubbing:**
+```
+Scrubber runs periodically:
+1. Select chunk to verify (round-robin)
+2. Read and verify hash
+3. If corrupted:
+   - Fetch from replica
+   - Repair local copy
+   - Log event
+4. Track scrub progress and statistics
+```
+
+## Cluster Architecture
+
+### Node Types
+
+Anode uses a **unified node architecture** - all nodes are identical:
+
+```
+Every node has:
+- S3 API endpoint (port 8080)
+- gRPC endpoint (port 9090)
+- Admin API (port 8081)
+- Full storage engine
+- Raft participation (voter or learner)
+```
+
+**No separate roles:**
+- No dedicated metadata servers
+- No dedicated storage nodes
+- No dedicated coordinators
+- All nodes can serve reads and writes
+
+### Cluster Formation
+
+**Bootstrap a new cluster:**
+```bash
+# Node 1 (bootstrap)
+anode --node-id 1 --bootstrap \
+      --grpc-addr 192.168.1.10:9090 \
+      --s3-addr 0.0.0.0:8080
+
+# Node 2 (join)
+anode --node-id 2 --join 192.168.1.10:9090 \
+      --grpc-addr 192.168.1.11:9090 \
+      --s3-addr 0.0.0.0:8080
+
+# Node 3 (join)
+anode --node-id 3 --join 192.168.1.10:9090 \
+      --grpc-addr 192.168.1.12:9090 \
+      --s3-addr 0.0.0.0:8080
+```
+
+### Node Communication
+
+```
+┌─────────────┐    gRPC     ┌─────────────┐
+│   Node 1    │◄───────────►│   Node 2    │
+│  (Leader)   │             │ (Follower)  │
+└─────────────┘             └─────────────┘
+      ▲                            ▲
+      │                            │
+      │         gRPC               │ gRPC
+      │                            │
+      ▼                            ▼
+┌─────────────┐             ┌─────────────┐
+│   Node 3    │◄───────────►│   Node 4    │
+│ (Follower)  │    gRPC     │ (Follower)  │
+└─────────────┘             └─────────────┘
+
+Communication types:
+- Raft RPCs (AppendEntries, RequestVote)
+- Chunk replication
+- Health checks
+- Cluster status
+```
+
+### Load Distribution
+
+**Request routing:**
+- Clients can connect to any node
+- Leader handles all writes (Raft requirement)
+- Followers forward writes to leader
+- Reads served from local node (may be stale)
+- Strongly consistent reads must go through leader
+
+**Placement group distribution:**
+```
+3 nodes, 128 PGs, replication factor 3:
+
+Node 1: PGs [0-42, 86-127]     (~85 PGs)
+Node 2: PGs [0-42, 43-85]      (~85 PGs)
+Node 3: PGs [43-127]           (~85 PGs)
+
+Each PG on 3 nodes → Full replication
+```
+
+### Failure Scenarios
+
+**Leader failure:**
+```
+1. Followers detect missing heartbeats
+2. Election timeout triggers
+3. Candidate requests votes
+4. Majority elects new leader
+5. New leader accepts writes
+
+Downtime: 3-10 seconds (configurable)
+```
+
+**Follower failure:**
+```
+1. Leader detects missing heartbeats
+2. Mark follower as unhealthy
+3. Continue serving requests (quorum maintained)
+4. When follower recovers:
+   - Sync from leader's log
+   - Replay missing entries
+   - Resume normal operation
+
+No downtime (assuming quorum)
+```
+
+**Network partition:**
+```
+Scenario: 3 nodes split into [1,2] and [3]
+
+Partition 1 [1,2]:
+- Has quorum (2/3)
+- Can elect leader
+- Accepts writes
+
+Partition 2 [3]:
+- No quorum (1/3)
+- Cannot elect leader
+- Rejects writes
+- Reads may be stale
+
+On heal:
+- Node 3 syncs from leader
+- Conflicting writes rejected (Raft guarantees)
+```
+
+## Design Decisions
+
+### 1. Unified Node Architecture
+
+**Decision:** All nodes run the same binary with S3 API, Raft, and storage.
+
+**Rationale:**
+- Simpler deployment (single binary)
+- Lower operational complexity
+- Better failure recovery (any node can become leader)
+- Easier testing and development
+
+**Trade-offs:**
+- Less resource optimization (can't tune per role)
+- Higher memory usage per node
+- May not scale to 1000+ nodes
+
+**Comparison:**
+- **Ceph**: Separate MON, OSD, MDS daemons
+- **MinIO**: Separate nodes possible via federation
+- **Anode**: Single unified binary
+
+### 2. Raft for Metadata Only
+
+**Decision:** Use Raft for metadata, replicate chunks separately.
+
+**Rationale:**
+- Metadata is small (kilobytes per object)
+- Chunk data is large (megabytes to gigabytes)
+- Raft log would grow too large with data
+- Allows async chunk replication for performance
+
+**Trade-offs:**
+- Two-phase commit (metadata then chunks)
+- Eventual consistency for chunk placement
+- More complex recovery logic
+
+**Alternative considered:** Replicate all data through Raft (rejected due to log size)
+
+### 3. Content-Addressed Storage
+
+**Decision:** Use SHA-256 hashes as chunk identifiers.
+
+**Rationale:**
+- Automatic deduplication
+- Integrity verification built-in
+- Immutable chunks simplify caching
+- Enables efficient repair and scrubbing
+
+**Trade-offs:**
+- Cannot do in-place updates
+- Higher CPU usage (hashing)
+- 64-byte chunk IDs vs. sequential IDs
+
+**Benefit:** 30-90% storage savings in typical workloads
+
+### 4. 4MB Chunk Size
+
+**Decision:** Fixed 4MB chunks (not variable or larger).
+
+**Rationale:**
+- Good balance for network transfer
+- Reasonable memory usage
+- Works well with Parquet row groups
+- Not too fine-grained (overhead)
+- Not too coarse (less deduplication)
+
+**Comparison:**
+- **Git**: Variable chunking (average ~4KB)
+- **S3**: No chunking (except multipart)
+- **IPFS**: ~256KB chunks
+- **Anode**: Fixed 4MB chunks
+
+### 5. redb for Metadata
+
+**Decision:** Use redb embedded database for metadata.
+
+**Rationale:**
+- Pure Rust (no C dependencies)
+- ACID transactions
+- No separate database server
+- Efficient range queries for listing
+- Good performance for metadata workloads
+
+**Trade-offs:**
+- Single-node only (replicated via Raft, not clustered)
+- Less mature than SQLite or RocksDB
+- Limited query capabilities (no SQL)
+
+**Alternative considered:** SQLite (rejected due to C dependencies)
+
+### 6. Placement Groups
+
+**Decision:** Use 128 virtual placement groups (configurable).
+
+**Rationale:**
+- Enables incremental rebalancing
+- Parallel replication operations
+- Better load distribution
+- Reduces rebalance overhead when nodes join/leave
+
+**Mechanism:**
+```
+Object → hash(bucket + key) % 128 → PG → [Node1, Node2, Node3]
+```
+
+**Trade-off:** More complex placement logic vs. simpler consistent hashing
+
+## Extension Points
+
+### 1. Storage Backend
+
+The storage engine is modular and can be extended:
 
 ```rust
-struct QueryHint {
-    row_groups_to_read: Vec<usize>,      // Skip pruned row groups
-    columns_to_read: Vec<String>,         // Project only needed columns
-    byte_ranges: Vec<(u64, u64)>,        // Exact byte ranges to fetch
-    predicates: Vec<Predicate>,           // Pushdown filters
+// Current: File-based blob store
+pub trait BlobStore {
+    fn write_chunk(&self, chunk_id: &ChunkId, data: &[u8]) -> Result<()>;
+    fn read_chunk(&self, chunk_id: &ChunkId) -> Result<Vec<u8>>;
+    fn delete_chunk(&self, chunk_id: &ChunkId) -> Result<()>;
 }
+
+// Potential implementations:
+// - S3 backend (use S3 as backend storage)
+// - Cloud storage (GCS, Azure Blob)
+// - Object storage pool (erasure coding)
 ```
 
-**Example:**
-```
-File: data.parquet (10 row groups, 100 columns)
-Query: SELECT id, name WHERE date = '2023-12-19'
+### 2. Authentication
 
-Optimization:
-1. Read footer metadata (cached)
-2. Check date column statistics
-3. Prune row groups 0-7 (dates outside range)
-4. Read only row groups 8-9
-5. Project only columns: id, name, date
-6. Apply date filter during scan
+Current: AWS SigV4 only
 
-Result: Read ~20% of file instead of 100%
-```
-
-### 6. Replication
-
-Data is replicated across nodes for durability:
-
-#### 6.1 Write Path
-
-```
-Client → PUT /bucket/key
-  │
-  ├─ Node 1 (receives request)
-  │    ├─ Hash(bucket, key) → PG 42
-  │    ├─ Find PG 42 leader (Node 2)
-  │    └─ Forward to Node 2
-  │
-  ├─ Node 2 (PG 42 leader)
-  │    ├─ Split data into chunks
-  │    ├─ Compute SHA-256 for each chunk
-  │    ├─ Write chunks to local storage
-  │    ├─ Create Raft log entry
-  │    ├─ Replicate log to followers (Node 1, Node 3)
-  │    ├─ Wait for majority (2/3) to acknowledge
-  │    ├─ Apply to state machine
-  │    └─ Return success to client
-  │
-  └─ Followers (Node 1, Node 3)
-       ├─ Receive Raft log entry
-       ├─ Fetch chunks from leader (streaming)
-       ├─ Write chunks to local storage
-       ├─ Acknowledge to leader
-       └─ Apply to state machine
-```
-
-#### 6.2 Read Path
-
-```
-Client → GET /bucket/key
-  │
-  ├─ Node 1 (receives request)
-  │    ├─ Hash(bucket, key) → PG 42
-  │    ├─ Check local metadata store
-  │    ├─ Find object manifest
-  │    └─ Read chunks from local storage
-  │
-  └─ Stream response to client
-```
-
-**Read Optimization:**
-- Any node can serve reads (eventual consistency option)
-- Linearizable reads go through Raft leader
-- Local reads for performance
-
-#### 6.3 Chunked Replication
-
-Large objects are replicated in parallel:
-
-```
-Object: 100MB = 25 chunks × 4MB each
-
-Replication (parallel):
-  Chunk 0 → Node 1 ──┐
-  Chunk 1 → Node 1 ──┤
-  Chunk 2 → Node 1 ──┼→ Replicate → Node 2, Node 3
-  ...                 │
-  Chunk 24 → Node 1 ─┘
-
-Throughput: Network bandwidth × replication_factor
-```
-
-## Data Flow Diagrams
-
-### Write Request Flow
-
-```
-┌──────┐     PUT      ┌────────┐    Forward    ┌────────┐
-│Client│─────────────→│ Node 1 │──────────────→│ Node 2 │
-└──────┘              │(Any)   │               │(Leader)│
-                      └────────┘               └────┬───┘
-                                                    │
-                      ┌─────────────────────────────┤
-                      │ 1. Split into chunks        │
-                      │ 2. Compute SHA-256          │
-                      │ 3. Write to local storage   │
-                      │ 4. Create Raft log entry    │
-                      └─────────────────────────────┘
-                                                    │
-                      ┌─────────────────────────────┼─────────────────────────┐
-                      │                             │                         │
-                      ▼                             ▼                         ▼
-                 ┌─────────┐                  ┌─────────┐             ┌─────────┐
-                 │ Node 1  │                  │ Node 2  │             │ Node 3  │
-                 │(Follower)│◀─────Raft───────│(Leader) │─────Raft───→│(Follower)│
-                 └─────────┘   Replicate      └─────────┘   Replicate └─────────┘
-                      │                             │                       │
-                      │ 5. Fetch chunks             │                       │
-                      │ 6. Write locally            │                       │
-                      │ 7. Acknowledge              │                       │
-                      ├────────────────────────────→│                       │
-                      │                             │◀──────────────────────┤
-                      │                             │                       │
-                      │        8. Majority reached  │                       │
-                      │        9. Commit            │                       │
-                      │        10. Return success   │                       │
-                      │                             │                       │
-```
-
-### Read Request Flow
-
-```
-┌──────┐     GET      ┌────────┐
-│Client│─────────────→│ Node 1 │
-└──────┘              │(Any)   │
-   ▲                  └────┬───┘
-   │                       │
-   │                       │ 1. Lookup metadata
-   │                       │ 2. Get chunk list
-   │                       │
-   │                  ┌────▼─────────────┐
-   │                  │ Local Metadata   │
-   │                  │ Store (redb)     │
-   │                  └────┬─────────────┘
-   │                       │
-   │                       │ 3. Read chunks
-   │                       │
-   │                  ┌────▼─────────────┐
-   │                  │ Local Blob       │
-   │                  │ Storage          │
-   │                  └────┬─────────────┘
-   │                       │
-   └───────────────────────┘ 4. Stream to client
-```
-
-## Failure Handling
-
-### Node Failure
-
-**Detection:**
-- Raft heartbeat timeout (3s default)
-- Health check endpoint failure
-
-**Recovery:**
-1. Raft elects new leader for affected PGs
-2. Clients retry requests (automatic)
-3. New leader continues servicing requests
-4. When failed node recovers, it rejoins as follower
-5. Catches up via Raft log replay or snapshot
-
-### Network Partition
-
-**Split Brain Prevention:**
-- Raft requires majority for writes
-- Minority partition cannot commit writes
-- Reads may be stale in minority partition
-
-**Example (3-node cluster):**
-```
-Partition: [Node1] | [Node2, Node3]
-
-Minority (Node1):
-- Cannot elect leader (no majority)
-- Cannot commit writes
-- Can serve stale reads (optional)
-
-Majority (Node2, Node3):
-- Elects new leader
-- Accepts writes
-- Serves consistent reads
-```
-
-**Partition Healing:**
-- Minority rejoins cluster
-- Raft log reconciliation
-- Stale data overwritten
-
-### Data Corruption
-
-**Detection:**
-- SHA-256 checksum verification on read
-- Periodic scrubbing (background process)
-
-**Recovery:**
-1. Detect corrupted chunk (checksum mismatch)
-2. Fetch correct chunk from replica
-3. Overwrite corrupted chunk
-4. Verify checksum
-5. Log corruption event
-
-### Disk Failure
-
-**Single Disk Failure:**
-- Node marks itself degraded
-- Redirects reads to replicas
-- Triggers data rebuild from replicas
-
-**Recovery:**
-1. Replace failed disk
-2. Rejoin cluster
-3. Fetch data from replicas
-4. Verify checksums
-5. Resume normal operation
-
-## Performance Characteristics
-
-### Latency
-
-**Write Latency:**
-- Network RTT × 2 (client → leader → follower → leader → client)
-- Disk sync (if enabled): +5-10ms
-- Small objects (<1MB): ~10-50ms
-- Large objects (>100MB): Throughput-bound
-
-**Read Latency:**
-- Local metadata lookup: <1ms
-- Small objects (<1MB): ~5-20ms
-- Large objects: Throughput-bound
-- Network-local reads (same rack): Lower latency
-
-### Throughput
-
-**Write Throughput:**
-- Limited by Raft leader and replication
-- Single object: Network bandwidth / replication_factor
-- Concurrent writes: Scales with number of PGs
-
-**Read Throughput:**
-- Scales linearly with nodes (local reads)
-- Limited by storage bandwidth
-- Parquet optimization: 5-10x improvement for analytics
-
-### Scalability
-
-**Node Count:**
-- Tested: 3-50 nodes
-- Recommended: 5-20 nodes for optimal performance
-- Maximum: Limited by PG count and coordination overhead
-
-**Storage Capacity:**
-- Per-node: Disk capacity
-- Cluster: Sum of all nodes / replication_factor
-- Metadata: ~1KB per object (cached in memory)
-
-**Object Count:**
-- Millions of objects per cluster
-- Limited by metadata storage and memory
-
-## Security
-
-### Authentication
-
-- AWS Signature V4 (industry standard)
-- Access key + secret key
-- Request signing prevents tampering
-
-### Authorization
-
-- Bucket-level permissions
-- Object-level ACLs (basic)
-- IAM-like policies (planned)
-
-### Encryption
-
-**In Transit:**
-- TLS 1.3 for S3 API
-- gRPC with TLS for inter-node communication
-
-**At Rest (optional):**
-- Chunk-level encryption (AES-256)
-- Key management integration (planned)
-
-### Network Isolation
-
-- Private cluster network (gRPC)
-- Public S3 API endpoint
-- NetworkPolicy support (Kubernetes)
-
-## Monitoring and Observability
-
-### Metrics (Prometheus)
-
-**Exposed at:** `:8081/metrics`
-
-**Key Metrics:**
-- Request rate and latency (P50, P95, P99)
-- Raft state (leader/follower, log size, commit index)
-- Storage usage (disk, memory, objects, chunks)
-- Replication lag
-- Error rates
-
-### Logging
-
-**Structured Logging (JSON):**
-```json
-{
-  "timestamp": "2023-12-19T10:30:00Z",
-  "level": "info",
-  "target": "anode::storage",
-  "message": "Object stored successfully",
-  "bucket": "my-bucket",
-  "key": "my-object",
-  "size": 1048576,
-  "chunks": 1,
-  "duration_ms": 45
+**Extension points:**
+```rust
+pub trait Authenticator {
+    async fn authenticate(&self, request: &Request) -> Result<Principal>;
 }
+
+// Potential implementations:
+// - LDAP/Active Directory
+// - OAuth2/OIDC
+// - API keys
+// - mTLS certificates
 ```
 
-**Log Levels:**
-- ERROR: Critical failures
-- WARN: Degraded operation
-- INFO: Normal operations
-- DEBUG: Detailed debugging
-- TRACE: Very verbose
+### 3. Replication Strategy
 
-### Tracing
+Current: Full replication (factor 3)
 
-- OpenTelemetry support (planned)
-- Distributed tracing across nodes
-- Request flow visualization
+**Extension points:**
+```rust
+pub trait ReplicationStrategy {
+    fn replicas_for_object(&self, key: &ObjectKey) -> Vec<NodeId>;
+}
 
-### Health Checks
+// Potential implementations:
+// - Erasure coding (6+3 Reed-Solomon)
+// - Hybrid (hot = replicated, cold = erasure coded)
+// - Geographic replication
+```
 
-**Endpoints:**
-- `/health` - Basic health (HTTP 200 = healthy)
-- `/health/ready` - Ready to accept traffic
-- `/health/live` - Process is alive
+### 4. Metadata Index
 
-**Checks:**
-- Raft connectivity
-- Storage accessibility
-- Memory usage
-- Disk space
+Current: redb with bucket/object tables
 
-## Comparison with Other Systems
+**Extension points:**
+```rust
+pub trait MetadataIndex {
+    async fn index_object(&self, manifest: &ObjectManifest) -> Result<()>;
+    async fn search(&self, query: &Query) -> Result<Vec<ObjectKey>>;
+}
 
-### vs. MinIO
+// Potential implementations:
+// - Full-text search (Tantivy)
+// - SQL interface (SQLite, PostgreSQL)
+// - Time-series indexing
+```
 
-| Feature | Anode | MinIO |
-|---------|-------|-------|
-| Consensus | Raft (strong consistency) | Erasure coding (eventual consistency) |
-| Deduplication | Chunk-level (SHA-256) | No |
-| Parquet Support | Metadata caching, optimization | Standard S3 |
-| Target Cluster Size | 3-50 nodes | 4-32+ nodes |
-| Language | Rust | Go |
+### 5. Lifecycle Policies
 
-### vs. Ceph
+Currently not implemented
 
-| Feature | Anode | Ceph |
-|---------|-------|------|
-| Architecture | Unified nodes | Separate OSD/MON/MDS |
-| Deployment | Single binary | Multiple daemons |
-| S3 Compatibility | Native | Via RGW gateway |
-| Complexity | Low | High |
-| Scalability | Small clusters | Large clusters (100s of nodes) |
+**Extension framework:**
+```rust
+pub trait LifecyclePolicy {
+    async fn evaluate(&self, object: &ObjectManifest) -> Action;
+}
 
-### vs. SeaweedFS
+pub enum Action {
+    Keep,
+    Transition(StorageClass),
+    Delete,
+}
 
-| Feature | Anode | SeaweedFS |
-|---------|-------|-----------|
-| Consistency | Strong (Raft) | Eventual |
-| Metadata Store | redb (embedded) | Separate master servers |
-| Deduplication | Automatic (content-addressed) | Manual |
-| Parquet Optimization | Yes | No |
+// Policies:
+// - Age-based deletion
+// - Transition to cold storage
+// - Transition to erasure coding
+```
 
-## Future Enhancements
+### 6. Monitoring and Observability
 
-### Planned Features
+Current: Prometheus metrics
 
-1. **Erasure Coding**: Reduce storage overhead vs. replication
-2. **Multi-Region Support**: Cross-datacenter replication
-3. **S3 Select**: Query data without downloading
-4. **Lambda Integration**: Event-driven processing
-5. **Lifecycle Policies**: Automatic data archival/deletion
-6. **Versioning**: Object version history
-7. **Object Locking**: WORM (Write Once Read Many)
-8. **Bucket Replication**: Cross-bucket replication
+**Extension points:**
+```rust
+pub trait MetricsCollector {
+    fn record_operation(&self, op: Operation, duration: Duration);
+    fn record_error(&self, error: &Error);
+}
 
-### Performance Improvements
+// Potential implementations:
+// - OpenTelemetry
+// - StatsD
+// - Custom metrics backend
+```
 
-1. **Pipelined Replication**: Overlap chunk transfer with Raft
-2. **Adaptive Chunking**: Variable chunk sizes based on object size
-3. **Intelligent Caching**: ML-based cache eviction
-4. **RDMA Support**: Low-latency networking for data transfer
+### 7. Caching Layers
 
-### Operational Enhancements
+Current: Parquet metadata cache only
 
-1. **Rolling Upgrades**: Zero-downtime updates
-2. **Auto-Scaling**: Dynamic node addition/removal
-3. **Self-Healing**: Automatic repair of corrupted data
-4. **Multi-Tenancy**: Isolated storage per tenant
+**Extension opportunities:**
+- Object metadata cache (Redis)
+- Hot object cache (in-memory LRU)
+- Edge caching (CDN integration)
+- Query result cache
+
+## Summary
+
+Anode's architecture provides:
+
+1. **Simplicity**: Unified nodes, single binary, straightforward deployment
+2. **Consistency**: Raft consensus for metadata, strong guarantees
+3. **Efficiency**: Content-addressed storage, automatic deduplication
+4. **Performance**: Parquet optimizations, placement groups, parallel operations
+5. **Reliability**: Hash verification, background scrubbing, repair from replicas
+6. **Extensibility**: Modular design with clear extension points
+
+The design prioritizes:
+- Operational simplicity over maximum scalability
+- Strong consistency over eventual consistency
+- Storage efficiency through deduplication
+- Analytical workload optimization (Parquet)
+- Pure Rust implementation for memory safety
+
+Target use case: Small to medium clusters (3-50 nodes) requiring S3-compatible storage with strong consistency and analytical optimizations.

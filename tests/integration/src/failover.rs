@@ -7,10 +7,7 @@
 //! - Simultaneous failures
 //! - Data consistency during failures
 
-use crate::{
-    setup_cluster, create_test_s3_client, random_bytes, unique_object_key,
-    BucketFixture,
-};
+use crate::{random_bytes, setup_cluster, BucketFixture};
 use aws_sdk_s3::primitives::ByteStream;
 use bytes::Bytes;
 use serial_test::serial;
@@ -33,7 +30,8 @@ async fn test_leader_failover() {
     let key = "pre-failover-object";
     let data = random_bytes(1024);
 
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -57,7 +55,8 @@ async fn test_leader_failover() {
     );
 
     // Verify pre-failover data is still accessible
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -82,7 +81,8 @@ async fn test_leader_failover() {
     let new_key = "post-failover-object";
     let new_data = random_bytes(2048);
 
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(new_key)
@@ -92,7 +92,8 @@ async fn test_leader_failover() {
         .unwrap();
 
     // Verify new data is readable
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(new_key)
@@ -133,7 +134,8 @@ async fn test_follower_failure() {
     let key = "before-follower-failure";
     let data = random_bytes(1024);
 
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -160,7 +162,8 @@ async fn test_follower_failure() {
     );
 
     // Should still be able to read and write with 2/3 nodes
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -176,13 +179,17 @@ async fn test_follower_failure() {
         .into_bytes()
         .to_vec();
 
-    assert_eq!(data, retrieved_data, "Should be able to read after follower failure");
+    assert_eq!(
+        data, retrieved_data,
+        "Should be able to read after follower failure"
+    );
 
     // Write new data
     let new_key = "after-follower-failure";
     let new_data = random_bytes(2048);
 
-    let write_result = fixture.client
+    let write_result = fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(new_key)
@@ -206,7 +213,8 @@ async fn test_minority_failure() {
     let key = "minority-failure-object";
     let data = random_bytes(1024);
 
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -223,7 +231,8 @@ async fn test_minority_failure() {
     sleep(Duration::from_secs(3)).await;
 
     // Cluster should still be operational with 3/5 nodes (majority)
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -252,7 +261,8 @@ async fn test_minority_failure() {
 
     // Should be able to write new data
     let new_key = "after-minority-failure";
-    let write_result = fixture.client
+    let write_result = fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(new_key)
@@ -276,7 +286,8 @@ async fn test_network_partition() {
     let key = "partition-test-object";
     let data = random_bytes(1024);
 
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -292,7 +303,8 @@ async fn test_network_partition() {
     sleep(Duration::from_secs(2)).await;
 
     // Majority partition (2/3) should still be operational
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -311,7 +323,8 @@ async fn test_network_partition() {
     sleep(Duration::from_secs(3)).await;
 
     // Verify data is still accessible
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -343,7 +356,8 @@ async fn test_cascading_failure() {
     let key = "cascading-failure-object";
     let data = random_bytes(1024);
 
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -359,7 +373,8 @@ async fn test_cascading_failure() {
 
     // Should still be operational
     assert!(
-        fixture.client
+        fixture
+            .client
             .get_object()
             .bucket(&fixture.bucket)
             .key(key)
@@ -375,7 +390,8 @@ async fn test_cascading_failure() {
 
     // Should still be operational (majority)
     assert!(
-        fixture.client
+        fixture
+            .client
             .get_object()
             .bucket(&fixture.bucket)
             .key(key)
@@ -386,7 +402,8 @@ async fn test_cascading_failure() {
     );
 
     // Verify data integrity
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -427,6 +444,7 @@ async fn test_leader_failure_during_write() {
         let client = fixture.client.clone();
         let bucket = fixture.bucket.clone();
         let key = format!("concurrent-object-{}", i);
+        let key_for_handle = key.clone();
         let data = random_bytes(1024);
 
         let handle = tokio::spawn(async move {
@@ -439,7 +457,7 @@ async fn test_leader_failure_during_write() {
                 .await
         });
 
-        write_handles.push((key, handle));
+        write_handles.push((key_for_handle, handle));
     }
 
     // Kill leader during writes
@@ -464,7 +482,8 @@ async fn test_leader_failure_during_write() {
 
     // All successful writes should be readable
     for key in &successful_writes {
-        let get_result = fixture.client
+        let get_result = fixture
+            .client
             .get_object()
             .bucket(&fixture.bucket)
             .key(key)
@@ -489,7 +508,8 @@ async fn test_split_brain_prevention() {
     let key = "split-brain-object";
     let data = random_bytes(1024);
 
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -508,17 +528,15 @@ async fn test_split_brain_prevention() {
     // The majority partition (3 nodes) should remain operational
     // The minority partition (2 nodes) should not accept writes
 
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(key)
         .send()
         .await;
 
-    assert!(
-        get_result.is_ok(),
-        "Majority partition should allow reads"
-    );
+    assert!(get_result.is_ok(), "Majority partition should allow reads");
 
     // Heal the partition
     cluster.heal_partition(3).await.unwrap();
@@ -527,7 +545,8 @@ async fn test_split_brain_prevention() {
     sleep(Duration::from_secs(3)).await;
 
     // Verify data is consistent across all nodes
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -561,7 +580,8 @@ async fn test_data_durability_on_failure() {
         let key = format!("durable-object-{}", i);
         let data = random_bytes(1024);
 
-        fixture.client
+        fixture
+            .client
             .put_object()
             .bucket(&fixture.bucket)
             .key(&key)
@@ -579,7 +599,8 @@ async fn test_data_durability_on_failure() {
 
     // Verify all data is still accessible
     for (key, expected_data) in &keys_and_data {
-        let get_result = fixture.client
+        let get_result = fixture
+            .client
             .get_object()
             .bucket(&fixture.bucket)
             .key(key)
@@ -608,7 +629,8 @@ async fn test_data_durability_on_failure() {
 
     // Verify all data is still accessible after node restart
     for (key, expected_data) in &keys_and_data {
-        let get_result = fixture.client
+        let get_result = fixture
+            .client
             .get_object()
             .bucket(&fixture.bucket)
             .key(key)
@@ -642,7 +664,8 @@ async fn test_rapid_leader_changes() {
     let key = "rapid-change-object";
     let data = random_bytes(1024);
 
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(key)
@@ -671,7 +694,8 @@ async fn test_rapid_leader_changes() {
     sleep(Duration::from_secs(2)).await;
 
     // Verify data is still accessible and intact
-    let get_result = fixture.client
+    let get_result = fixture
+        .client
         .get_object()
         .bucket(&fixture.bucket)
         .key(key)

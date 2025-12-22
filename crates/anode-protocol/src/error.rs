@@ -1,3 +1,8 @@
+//! Protocol error types and conversions.
+//!
+//! This module defines error types specific to inter-node protocol communication.
+//! All errors can be converted to gRPC Status codes for transmission over the wire.
+
 use thiserror::Error;
 use tonic::Status;
 
@@ -98,29 +103,27 @@ impl From<ProtocolError> for Status {
         match err {
             ProtocolError::InvalidMessage(msg) => {
                 Status::invalid_argument(format!("Invalid message: {}", msg))
-            }
-            ProtocolError::NodeNotFound(id) => {
-                Status::not_found(format!("Node not found: {}", id))
-            }
+            },
+            ProtocolError::NodeNotFound(id) => Status::not_found(format!("Node not found: {}", id)),
             ProtocolError::NotLeader { leader } => {
                 let msg = match leader {
                     Some(leader_id) => format!("Not leader. Leader: {}", leader_id),
                     None => "Not leader. Leader unknown".to_string(),
                 };
                 Status::failed_precondition(msg)
-            }
+            },
             ProtocolError::ChunkNotFound(id) => {
                 Status::not_found(format!("Chunk not found: {}", id))
-            }
+            },
             ProtocolError::ObjectNotFound(key) => {
                 Status::not_found(format!("Object not found: {}", key))
-            }
+            },
             ProtocolError::BucketNotFound(name) => {
                 Status::not_found(format!("Bucket not found: {}", name))
-            }
+            },
             ProtocolError::BucketAlreadyExists(name) => {
                 Status::already_exists(format!("Bucket already exists: {}", name))
-            }
+            },
             ProtocolError::ChecksumMismatch { expected, actual } => Status::data_loss(format!(
                 "Checksum mismatch: expected {}, got {}",
                 expected, actual
@@ -128,10 +131,10 @@ impl From<ProtocolError> for Status {
             ProtocolError::Io(e) => Status::internal(format!("I/O error: {}", e)),
             ProtocolError::Serialization(msg) => {
                 Status::internal(format!("Serialization error: {}", msg))
-            }
+            },
             ProtocolError::Deserialization(msg) => {
                 Status::invalid_argument(format!("Deserialization error: {}", msg))
-            }
+            },
             ProtocolError::Storage(msg) => Status::internal(format!("Storage error: {}", msg)),
             ProtocolError::InsufficientReplicas {
                 required,
@@ -148,14 +151,14 @@ impl From<ProtocolError> for Status {
             ),
             ProtocolError::InvalidState(msg) => {
                 Status::failed_precondition(format!("Invalid state: {}", msg))
-            }
+            },
             ProtocolError::Unauthorized => Status::permission_denied("Unauthorized"),
             ProtocolError::ResourceExhausted(msg) => {
                 Status::resource_exhausted(format!("Resource exhausted: {}", msg))
-            }
+            },
             ProtocolError::AlreadyExists(msg) => {
                 Status::already_exists(format!("Already exists: {}", msg))
-            }
+            },
             ProtocolError::Conflict(msg) => Status::aborted(format!("Conflict: {}", msg)),
         }
     }
@@ -170,9 +173,7 @@ mod tests {
 
     #[test]
     fn test_error_to_status_not_leader() {
-        let err = ProtocolError::NotLeader {
-            leader: Some(42),
-        };
+        let err = ProtocolError::NotLeader { leader: Some(42) };
         let status: Status = err.into();
         assert_eq!(status.code(), tonic::Code::FailedPrecondition);
         assert!(status.message().contains("Leader: 42"));

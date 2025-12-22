@@ -1,29 +1,62 @@
 {{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitor.enabled }}
+---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: {{ include "anode.fullname" . }}
+  namespace: {{ .Values.monitoring.serviceMonitor.namespace | default .Release.Namespace }}
   labels:
     {{- include "anode.labels" . | nindent 4 }}
     {{- with .Values.monitoring.serviceMonitor.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+  {{- with .Values.monitoring.serviceMonitor.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   selector:
     matchLabels:
       {{- include "anode.selectorLabels" . | nindent 6 }}
       service-type: loadbalancer
+
+  {{- with .Values.monitoring.serviceMonitor.namespaceSelector }}
+  namespaceSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
   endpoints:
   - port: admin
-    path: {{ .Values.config.metrics.path }}
-    interval: {{ .Values.monitoring.serviceMonitor.interval }}
-    scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout }}
+    path: {{ .Values.config.metrics.path | default "/metrics" }}
+    interval: {{ .Values.monitoring.serviceMonitor.interval | default "15s" }}
+    scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+
+    {{- with .Values.monitoring.serviceMonitor.scheme }}
+    scheme: {{ . }}
+    {{- end }}
+
+    {{- with .Values.monitoring.serviceMonitor.tlsConfig }}
+    tlsConfig:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+
     {{- with .Values.monitoring.serviceMonitor.relabelings }}
     relabelings:
-      {{- toYaml . | nindent 4 }}
+      {{- toYaml . | nindent 6 }}
     {{- end }}
+
     {{- with .Values.monitoring.serviceMonitor.metricRelabelings }}
     metricRelabelings:
-      {{- toYaml . | nindent 4 }}
+      {{- toYaml . | nindent 6 }}
     {{- end }}
+
+  {{- with .Values.monitoring.serviceMonitor.targetLabels }}
+  targetLabels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with .Values.monitoring.serviceMonitor.podTargetLabels }}
+  podTargetLabels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 {{- end }}

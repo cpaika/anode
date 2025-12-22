@@ -92,8 +92,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-target-test-
 
-      - name: Run tests
-        run: cargo test -p anode-storage -p anode-raft -p anode-s3 -p anode-protocol -p anode-parquet -p anode-client -p anode --all-features --verbose
+      - name: Run unit tests for all core crates
+        run: cargo test -p anode-storage -p anode-raft -p anode-s3 -p anode-protocol -p anode-parquet -p anode-client -p anode -p anode-test-harness -p anode-correctness-tests --all-features --verbose
+
+      - name: Compile integration and chaos tests
+        run: cargo test --no-run -p anode-integration-tests -p anode-chaos-tests --all-features
 
       - name: Run doc tests
         run: cargo test --workspace --doc
@@ -229,7 +232,7 @@ jobs:
             ${{ runner.os }}-target-coverage-
 
       - name: Generate coverage
-        run: cargo llvm-cov -p anode-storage -p anode-raft -p anode-s3 -p anode-protocol -p anode-parquet -p anode-client -p anode --all-features --lcov --output-path lcov.info
+        run: cargo llvm-cov -p anode-storage -p anode-raft -p anode-s3 -p anode-protocol -p anode-parquet -p anode-client -p anode -p anode-test-harness -p anode-correctness-tests --all-features --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -276,7 +279,7 @@ jobs:
         run: cargo build --workspace --all-features --locked
 
       - name: Run tests with MSRV
-        run: cargo test -p anode-storage -p anode-raft -p anode-s3 -p anode-protocol -p anode-parquet -p anode-client -p anode --all-features
+        run: cargo test -p anode-storage -p anode-raft -p anode-s3 -p anode-protocol -p anode-parquet -p anode-client -p anode -p anode-test-harness -p anode-correctness-tests --all-features
 
   security:
     name: Security Audit

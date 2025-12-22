@@ -2,7 +2,6 @@
 //!
 //! Tests system behavior when nodes crash unexpectedly
 
-use anode_chaos_tests::{scenarios, utils};
 use anode_test_harness::{
     assertions::*,
     cluster::TestCluster,
@@ -45,13 +44,19 @@ async fn test_leader_crash_and_recovery() {
     cluster.start().await.unwrap();
 
     // Wait for initial leader election
-    let leader_id = cluster.wait_for_leader(Duration::from_secs(10)).await.unwrap();
+    let leader_id = cluster
+        .wait_for_leader(Duration::from_secs(10))
+        .await
+        .unwrap();
 
     // Kill the leader
     cluster.kill_node(leader_id as usize).await.unwrap();
 
     // New leader should be elected
-    let new_leader = cluster.wait_for_leader(Duration::from_secs(10)).await.unwrap();
+    let new_leader = cluster
+        .wait_for_leader(Duration::from_secs(10))
+        .await
+        .unwrap();
     assert_ne!(leader_id, new_leader, "New leader should be elected");
 
     cluster.stop().await.unwrap();
@@ -161,8 +166,47 @@ async fn test_crash_and_restart_cycle() {
         tokio::time::sleep(Duration::from_secs(2)).await;
 
         // Verify data is still accessible
-        assert_object_content(&cluster, bucket, &key, &value).await.unwrap();
+        assert_object_content(&cluster, bucket, &key, &value)
+            .await
+            .unwrap();
     }
+
+    cluster.stop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_follower_crash_during_replication() {
+    use anode_chaos_tests::scenarios::node_crash::FollowerCrashDuringReplicationScenario;
+    use anode_chaos_tests::scenarios::{ChaosScenario, ScenarioConfig};
+
+    let mut cluster = TestCluster::new(5).await.unwrap();
+    cluster.start().await.unwrap();
+
+    // Wait for cluster to stabilize
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let config = ScenarioConfig {
+        num_nodes: 5,
+        duration: Duration::from_secs(60),
+        verify_integrity: true,
+        workload_intensity: 10.0,
+        params: serde_json::Value::Null,
+    };
+
+    let scenario = FollowerCrashDuringReplicationScenario;
+    let result = scenario.run(&mut cluster, &config).await.unwrap();
+
+    // Verify the scenario succeeded
+    assert!(
+        result.success,
+        "Follower crash during replication scenario should succeed"
+    );
+    assert!(
+        result.integrity_verified,
+        "Data integrity should be verified"
+    );
+    assert_eq!(result.failures, 0, "Should have no failures");
 
     cluster.stop().await.unwrap();
 }

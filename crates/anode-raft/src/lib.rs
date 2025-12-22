@@ -11,7 +11,7 @@
 //!
 //! ```no_run
 //! use anode_raft::{RaftConfig, LogStore, StateMachine, RaftNetworkManager};
-//! use anode_storage::StorageEngine;
+//! use anode_storage::{StorageConfig, StorageEngine};
 //! use std::sync::Arc;
 //! use std::path::PathBuf;
 //!
@@ -22,7 +22,8 @@
 //!
 //! // Create storage components
 //! let log_store = LogStore::open(&config.log_dir().join("raft.db"))?;
-//! let storage_engine = Arc::new(StorageEngine::new(config.data_dir.clone())?);
+//! let storage_config = StorageConfig::new(config.data_dir.clone());
+//! let storage_engine = Arc::new(StorageEngine::open(storage_config).await?);
 //! let state_machine = StateMachine::new(storage_engine, config.snapshot_dir());
 //!
 //! // Create network manager
@@ -42,28 +43,72 @@ pub mod storage;
 pub mod types;
 
 // Re-export main types
-pub use config::RaftConfig;
+pub use config::{RaftConfig, TlsConfig};
 pub use error::{RaftError, Result};
 pub use network::{RaftNetworkConnection, RaftNetworkManager};
 pub use state_machine::{SnapshotBuilder, SnapshotData, StateMachine};
 pub use storage::LogStore;
-pub use types::{AnodeRaft, BucketConfig, Command, NodeId, Request, Response, ResponseData, TypeConfig};
+pub use types::{
+    AnodeRaft, BucketConfig, Command, NodeId, Request, Response, ResponseData, TypeConfig,
+};
 
-use openraft::storage::Adaptor;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Combined Raft storage that includes both log storage and state machine
-pub type RaftStorage = Adaptor<TypeConfig, LogStore, StateMachine>;
-
-/// Builder for creating a complete Raft node with all components
+/// Builder for creating a complete Raft node with all required components.
+///
+/// This builder simplifies the process of creating a Raft node by handling the
+/// initialization of all necessary components (log store, state machine, network
+/// manager) and wiring them together.
+///
+/// # Examples
+///
+/// ```no_run
+/// use anode_raft::{RaftNodeBuilder, RaftConfig};
+/// use anode_storage::StorageEngine;
+/// use std::sync::Arc;
+/// use std::path::PathBuf;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let config = RaftConfig::new(1, "my-cluster", PathBuf::from("/data/raft"));
+///
+/// let storage_config = anode_storage::StorageConfig {
+///     data_dir: PathBuf::from("/data/blobs"),
+///     metadata_dir: PathBuf::from("/data/metadata"),
+///     chunk_size: 4 * 1024 * 1024,
+///     sync_writes: false,
+/// };
+/// let storage = Arc::new(StorageEngine::open(storage_config).await?);
+///
+/// let raft = RaftNodeBuilder::new(config)
+///     .storage_engine(storage)
+///     .build()
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct RaftNodeBuilder {
+    /// Raft configuration
     config: RaftConfig,
+    /// Storage engine for object data (required)
     storage_engine: Option<Arc<anode_storage::StorageEngine>>,
 }
 
 impl RaftNodeBuilder {
-    /// Create a new builder with the given configuration
+    /// Create a new builder with the specified configuration.
+    ///
+    /// The storage engine must be set using [`storage_engine`](Self::storage_engine)
+    /// before calling [`build`](Self::build).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use anode_raft::{RaftNodeBuilder, RaftConfig};
+    /// use std::path::PathBuf;
+    ///
+    /// let config = RaftConfig::new(1, "cluster", PathBuf::from("/data/raft"));
+    /// let builder = RaftNodeBuilder::new(config);
+    /// ```
     pub fn new(config: RaftConfig) -> Self {
         Self {
             config,
@@ -71,17 +116,83 @@ impl RaftNodeBuilder {
         }
     }
 
-    /// Set the storage engine
+    /// Set the storage engine for object data (required).
+    ///
+    /// The storage engine handles the actual storage of object data and metadata.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use anode_raft::{RaftNodeBuilder, RaftConfig};
+    /// use anode_storage::StorageEngine;
+    /// use std::sync::Arc;
+    /// use std::path::PathBuf;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = RaftConfig::new(1, "cluster", PathBuf::from("/data/raft"));
+    ///
+    /// let storage_config = anode_storage::StorageConfig {
+    ///     data_dir: PathBuf::from("/data/blobs"),
+    ///     metadata_dir: PathBuf::from("/data/metadata"),
+    ///     chunk_size: 4 * 1024 * 1024,
+    ///     sync_writes: false,
+    /// };
+    /// let storage = Arc::new(StorageEngine::open(storage_config).await?);
+    ///
+    /// let builder = RaftNodeBuilder::new(config)
+    ///     .storage_engine(storage);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn storage_engine(mut self, storage: Arc<anode_storage::StorageEngine>) -> Self {
         self.storage_engine = Some(storage);
         self
     }
 
-    /// Build the Raft storage components
-    pub fn build_storage(self) -> Result<RaftStorage> {
-        let storage_engine = self.storage_engine.ok_or_else(|| {
-            RaftError::InvalidConfig("Storage engine not set".to_string())
-        })?;
+    /// Build and initialize the complete Raft node.
+    ///
+    /// This creates all necessary components (log store, state machine, network manager)
+    /// and assembles them into a working Raft instance. The log and snapshot directories
+    /// will be created if they don't exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The storage engine was not set
+    /// - Directories cannot be created
+    /// - The log store cannot be opened
+    /// - Raft initialization fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use anode_raft::{RaftNodeBuilder, RaftConfig};
+    /// use anode_storage::StorageEngine;
+    /// use std::sync::Arc;
+    /// use std::path::PathBuf;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = RaftConfig::new(1, "cluster", PathBuf::from("/data/raft"));
+    ///
+    /// let storage_config = anode_storage::StorageConfig {
+    ///     data_dir: PathBuf::from("/data/blobs"),
+    ///     metadata_dir: PathBuf::from("/data/metadata"),
+    ///     chunk_size: 4 * 1024 * 1024,
+    ///     sync_writes: false,
+    /// };
+    /// let storage = Arc::new(StorageEngine::open(storage_config).await?);
+    ///
+    /// let raft = RaftNodeBuilder::new(config)
+    ///     .storage_engine(storage)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn build(self) -> Result<AnodeRaft> {
+        let storage_engine = self
+            .storage_engine
+            .ok_or_else(|| RaftError::InvalidConfig("Storage engine not set".to_string()))?;
 
         // Ensure directories exist
         std::fs::create_dir_all(&self.config.log_dir())?;
@@ -93,26 +204,72 @@ impl RaftNodeBuilder {
         // Create state machine
         let state_machine = StateMachine::new(storage_engine, self.config.snapshot_dir());
 
-        // Combine into Raft storage
-        Ok(Adaptor::new(log_store, state_machine))
-    }
-
-    /// Build a complete Raft node
-    pub async fn build(self) -> Result<AnodeRaft> {
-        let config = self.config.clone();
-        let storage = self.build_storage()?;
+        // Create network manager
         let network = RaftNetworkManager::new();
 
-        let raft_config = config.to_openraft_config();
-        let raft = openraft::Raft::new(config.node_id, raft_config, network, storage)
-            .await
-            .map_err(|e| RaftError::Fatal(format!("Failed to create Raft: {:?}", e)))?;
+        let raft_config = Arc::new(self.config.to_openraft_config());
+
+        // In storage-v2, Raft::new takes log_store and state_machine separately
+        let raft = openraft::Raft::new(
+            self.config.node_id,
+            raft_config,
+            network,
+            log_store,
+            state_machine,
+        )
+        .await
+        .map_err(|e| RaftError::Fatal(format!("Failed to create Raft: {:?}", e)))?;
 
         Ok(raft)
     }
 }
 
-/// Convenience function to create a Raft node with default settings
+/// Convenience function to create a Raft node with default settings.
+///
+/// This is a shorthand for creating a [`RaftConfig`] with default parameters,
+/// validating it, and building the Raft node. For more control over configuration,
+/// use [`RaftNodeBuilder`] directly.
+///
+/// # Arguments
+///
+/// * `node_id` - Unique identifier for this node (must be non-zero)
+/// * `cluster_name` - Name of the cluster this node belongs to
+/// * `data_dir` - Root directory for Raft data (logs and snapshots)
+/// * `storage_engine` - Storage engine for object data
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The configuration is invalid
+/// - Directories cannot be created
+/// - Raft initialization fails
+///
+/// # Examples
+///
+/// ```no_run
+/// use anode_raft::create_raft_node;
+/// use anode_storage::StorageEngine;
+/// use std::sync::Arc;
+/// use std::path::PathBuf;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let storage_config = anode_storage::StorageConfig {
+///     data_dir: PathBuf::from("/data/blobs"),
+///     metadata_dir: PathBuf::from("/data/metadata"),
+///     chunk_size: 4 * 1024 * 1024,
+///     sync_writes: false,
+/// };
+/// let storage = Arc::new(StorageEngine::open(storage_config).await?);
+///
+/// let raft = create_raft_node(
+///     1,
+///     "my-cluster",
+///     PathBuf::from("/data/raft"),
+///     storage
+/// ).await?;
+/// # Ok(())
+/// # }
+/// ```
 pub async fn create_raft_node(
     node_id: NodeId,
     cluster_name: impl Into<String>,
@@ -140,11 +297,19 @@ mod tests {
         assert!(builder.storage_engine.is_none());
     }
 
-    #[test]
-    fn test_builder_with_storage() {
+    #[tokio::test]
+    async fn test_builder_with_storage() {
         let temp_dir = TempDir::new().unwrap();
+        let storage_config = anode_storage::StorageConfig {
+            data_dir: temp_dir.path().join("blobs"),
+            metadata_dir: temp_dir.path().join("metadata"),
+            chunk_size: anode_storage::chunks::CHUNK_SIZE,
+            sync_writes: false,
+        };
         let storage = Arc::new(
-            anode_storage::StorageEngine::new(temp_dir.path().to_path_buf()).unwrap(),
+            anode_storage::StorageEngine::open(storage_config)
+                .await
+                .unwrap(),
         );
 
         let config = RaftConfig::default();
@@ -153,31 +318,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_build_storage() {
-        let temp_dir = TempDir::new().unwrap();
-        let data_dir = temp_dir.path().join("raft");
-
-        let storage = Arc::new(
-            anode_storage::StorageEngine::new(temp_dir.path().to_path_buf()).unwrap(),
-        );
-
-        let config = RaftConfig::new(1, "test", data_dir);
-        let raft_storage = RaftNodeBuilder::new(config)
-            .storage_engine(storage)
-            .build_storage()
-            .unwrap();
-
-        // Verify storage was created
-        // The Adaptor type doesn't expose much publicly, but we can verify it was created
-    }
-
-    #[tokio::test]
     async fn test_create_raft_node() {
         let temp_dir = TempDir::new().unwrap();
         let data_dir = temp_dir.path().join("raft");
 
+        let storage_config = anode_storage::StorageConfig {
+            data_dir: temp_dir.path().join("blobs"),
+            metadata_dir: temp_dir.path().join("metadata"),
+            chunk_size: anode_storage::chunks::CHUNK_SIZE,
+            sync_writes: false,
+        };
         let storage = Arc::new(
-            anode_storage::StorageEngine::new(temp_dir.path().to_path_buf()).unwrap(),
+            anode_storage::StorageEngine::open(storage_config)
+                .await
+                .unwrap(),
         );
 
         let result = create_raft_node(1, "test-cluster", data_dir, storage).await;

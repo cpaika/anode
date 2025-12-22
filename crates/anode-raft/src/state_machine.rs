@@ -1,8 +1,4 @@
-use crate::error::Result;
-use crate::types::{
-    BucketConfig, Command, NodeId, Request, Response, ResponseData, TypeConfig,
-};
-use anode_protocol::ObjectKey;
+use crate::types::{BucketConfig, Command, NodeId, Response, ResponseData, TypeConfig};
 use anode_storage::StorageEngine;
 use openraft::storage::{RaftStateMachine, Snapshot};
 use openraft::{
@@ -16,42 +12,134 @@ use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Snapshot data structure
+/// Serializable snapshot of the Raft state machine.
+///
+/// This structure represents a point-in-time snapshot of the entire state machine,
+/// including cluster membership, bucket configurations, and object metadata. Snapshots
+/// are used for log compaction and for bringing new or recovering nodes up to date.
+///
+/// # Serialization
+///
+/// Snapshots are serialized using [bincode](https://docs.rs/bincode) for efficient
+/// encoding and decoding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotData {
-    /// Last applied log ID
+    /// The log ID of the last entry applied to the state machine at snapshot time.
+    ///
+    /// This marks the point in the log where this snapshot was taken. All log
+    /// entries up to and including this ID are reflected in the snapshot state.
     pub last_applied_log: Option<LogId<NodeId>>,
 
-    /// Last membership configuration
+    /// The cluster membership configuration at snapshot time.
+    ///
+    /// This includes the set of nodes in the cluster and their addresses.
     pub last_membership: StoredMembership<NodeId, BasicNode>,
 
-    /// Bucket configurations
+    /// All bucket configurations in the system.
+    ///
+    /// Maps bucket names to their configuration (replication factor, creation time, etc.).
     pub buckets: HashMap<String, BucketConfig>,
 
-    /// Object metadata snapshot
-    pub objects: Vec<(String, String)>, // (bucket, key) pairs
+    /// List of all objects in the system.
+    ///
+    /// Each entry is a `(bucket, key)` pair. The actual object data is stored
+    /// separately in the storage engine.
+    pub objects: Vec<(String, String)>,
 }
 
-/// State machine for Anode
+/// Raft state machine implementation for Anode.
+///
+/// This implements [`openraft::storage::RaftStateMachine`] and handles the application
+/// of committed log entries to the storage system. It manages bucket and object metadata,
+/// while delegating actual object storage to the [`anode_storage::StorageEngine`].
+///
+/// # State
+///
+/// The state machine tracks:
+/// - Bucket configurations (in-memory)
+/// - Last applied log ID
+/// - Cluster membership
+/// - References to objects (actual data is in the storage engine)
+///
+/// # Snapshots
+///
+/// Snapshots are created periodically to compact the log. They capture the entire
+/// state machine state and are stored in the configured snapshot directory.
+///
+/// # Examples
+///
+/// ```no_run
+/// use anode_raft::StateMachine;
+/// use anode_storage::StorageEngine;
+/// use std::sync::Arc;
+/// use std::path::PathBuf;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # let storage_config = anode_storage::StorageConfig {
+/// #     data_dir: PathBuf::from("/data/blobs"),
+/// #     metadata_dir: PathBuf::from("/data/metadata"),
+/// #     chunk_size: 4 * 1024 * 1024,
+/// #     sync_writes: false,
+/// # };
+/// let storage = Arc::new(StorageEngine::open(storage_config).await?);
+/// let state_machine = StateMachine::new(
+///     storage,
+///     PathBuf::from("/data/snapshots")
+/// );
+/// # Ok(())
+/// # }
+/// ```
 pub struct StateMachine {
-    /// Storage engine for persisting objects
+    /// Storage engine for persisting object data and metadata
     storage: Arc<StorageEngine>,
 
-    /// Last applied log entry
+    /// Last log entry applied to the state machine
     last_applied: Arc<RwLock<Option<LogId<NodeId>>>>,
 
-    /// Last membership configuration
+    /// Current cluster membership configuration
     last_membership: Arc<RwLock<StoredMembership<NodeId, BasicNode>>>,
 
-    /// Bucket configurations in memory
+    /// In-memory bucket configurations
     buckets: Arc<RwLock<HashMap<String, BucketConfig>>>,
 
-    /// Snapshot directory
+    /// Directory where snapshots are stored
     snapshot_dir: PathBuf,
 }
 
 impl StateMachine {
-    /// Create a new state machine
+    /// Create a new state machine with the specified storage engine and snapshot directory.
+    ///
+    /// The state machine starts with no applied logs and an empty cluster membership.
+    /// Bucket configurations are loaded from the storage engine on first use.
+    ///
+    /// # Arguments
+    ///
+    /// * `storage` - The storage engine for object data
+    /// * `snapshot_dir` - Directory where snapshots will be stored
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use anode_raft::StateMachine;
+    /// use anode_storage::StorageEngine;
+    /// use std::sync::Arc;
+    /// use std::path::PathBuf;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let storage_config = anode_storage::StorageConfig {
+    /// #     data_dir: PathBuf::from("/data/blobs"),
+    /// #     metadata_dir: PathBuf::from("/data/metadata"),
+    /// #     chunk_size: 4 * 1024 * 1024,
+    /// #     sync_writes: false,
+    /// # };
+    /// let storage = Arc::new(StorageEngine::open(storage_config).await?);
+    /// let state_machine = StateMachine::new(
+    ///     storage,
+    ///     PathBuf::from("/data/snapshots")
+    /// );
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn new(storage: Arc<StorageEngine>, snapshot_dir: PathBuf) -> Self {
         Self {
             storage,
@@ -62,7 +150,14 @@ impl StateMachine {
         }
     }
 
-    /// Apply a single command to the state machine
+    /// Apply a single command to the state machine.
+    ///
+    /// This is called internally when processing log entries. Commands are validated
+    /// before being applied to ensure consistency.
+    ///
+    /// # Returns
+    ///
+    /// A [`Response`] indicating success or failure, potentially with data.
     async fn apply_command(&self, command: Command) -> Response {
         match command {
             Command::PutObject {
@@ -79,22 +174,21 @@ impl StateMachine {
                 // and ensure chunks are available before committing
                 tracing::info!("Applied PutObject: {}/{}", bucket, key);
                 Response::success_with_data(ResponseData::ObjectManifest(manifest))
-            }
+            },
 
             Command::DeleteObject { bucket, key } => {
                 if !self.buckets.read().contains_key(&bucket) {
                     return Response::error(format!("Bucket '{}' does not exist", bucket));
                 }
 
-                let obj_key = ObjectKey::new(&bucket, &key);
-                match self.storage.delete_object(&obj_key).await {
+                match self.storage.delete_object(&bucket, &key).await {
                     Ok(_) => {
                         tracing::info!("Applied DeleteObject: {}/{}", bucket, key);
                         Response::success()
-                    }
+                    },
                     Err(e) => Response::error(format!("Failed to delete object: {}", e)),
                 }
-            }
+            },
 
             Command::CreateBucket { name, config } => {
                 let mut buckets = self.buckets.write();
@@ -105,7 +199,7 @@ impl StateMachine {
                 buckets.insert(name.clone(), config);
                 tracing::info!("Applied CreateBucket: {}", name);
                 Response::success()
-            }
+            },
 
             Command::DeleteBucket { name } => {
                 let mut buckets = self.buckets.write();
@@ -116,7 +210,7 @@ impl StateMachine {
                 buckets.remove(&name);
                 tracing::info!("Applied DeleteBucket: {}", name);
                 Response::success()
-            }
+            },
         }
     }
 
@@ -152,17 +246,13 @@ impl StateMachine {
     }
 }
 
-#[async_trait::async_trait]
 impl RaftStateMachine<TypeConfig> for StateMachine {
     type SnapshotBuilder = SnapshotBuilder;
 
     async fn applied_state(
         &mut self,
     ) -> std::result::Result<
-        (
-            Option<LogId<NodeId>>,
-            StoredMembership<NodeId, BasicNode>,
-        ),
+        (Option<LogId<NodeId>>, StoredMembership<NodeId, BasicNode>),
         StorageError<NodeId>,
     > {
         Ok((
@@ -176,8 +266,7 @@ impl RaftStateMachine<TypeConfig> for StateMachine {
         entries: I,
     ) -> std::result::Result<Vec<Response>, StorageError<NodeId>>
     where
-        I: IntoIterator<Item = Entry<TypeConfig>> + Send,
-        I::IntoIter: Send,
+        I: IntoIterator<Item = Entry<TypeConfig>>,
     {
         let mut responses = Vec::new();
 
@@ -188,10 +277,11 @@ impl RaftStateMachine<TypeConfig> for StateMachine {
                 EntryPayload::Blank => Response::success(),
                 EntryPayload::Normal(request) => self.apply_command(request.command).await,
                 EntryPayload::Membership(membership) => {
-                    *self.last_membership.write() = membership.clone();
-                    tracing::info!("Applied membership change: {:?}", membership);
+                    *self.last_membership.write() =
+                        StoredMembership::new(Some(entry.log_id), membership);
+                    tracing::info!("Applied membership change at log_id {:?}", entry.log_id);
                     Response::success()
-                }
+                },
             };
 
             responses.push(response);
@@ -213,18 +303,20 @@ impl RaftStateMachine<TypeConfig> for StateMachine {
     ) -> std::result::Result<(), StorageError<NodeId>> {
         let data = snapshot.into_inner();
 
-        let snapshot_data: SnapshotData = bincode::deserialize(&data).map_err(|e| {
-            StorageError::IO {
+        let snapshot_data: SnapshotData =
+            bincode::deserialize(&data).map_err(|e| StorageError::IO {
                 source: StorageIOError::read(&e),
-            }
-        })?;
+            })?;
 
         self.restore_snapshot(snapshot_data).await?;
 
         tracing::info!(
             "Installed snapshot at index {}, term {}",
             meta.last_log_id.as_ref().map(|l| l.index).unwrap_or(0),
-            meta.last_log_id.as_ref().map(|l| l.leader_id.term).unwrap_or(0)
+            meta.last_log_id
+                .as_ref()
+                .map(|l| l.leader_id.term)
+                .unwrap_or(0)
         );
 
         Ok(())
@@ -247,14 +339,26 @@ impl RaftStateMachine<TypeConfig> for StateMachine {
     }
 }
 
-/// Snapshot builder for creating snapshots asynchronously
+/// Builder for creating state machine snapshots asynchronously.
+///
+/// This type implements [`openraft::RaftSnapshotBuilder`] and creates snapshots
+/// of the state machine without blocking the main Raft thread. The snapshot
+/// captures the state at a specific point in time.
+///
+/// # Usage
+///
+/// This type is created internally by the state machine's
+/// [`get_snapshot_builder`](StateMachine::get_snapshot_builder) method and
+/// should not be constructed directly.
 pub struct SnapshotBuilder {
+    /// Log ID of the last entry reflected in this snapshot
     last_applied: Option<LogId<NodeId>>,
+    /// Cluster membership at snapshot time
     last_membership: StoredMembership<NodeId, BasicNode>,
+    /// Bucket configurations at snapshot time
     buckets: HashMap<String, BucketConfig>,
 }
 
-#[async_trait::async_trait]
 impl RaftSnapshotBuilder<TypeConfig> for SnapshotBuilder {
     async fn build_snapshot(
         &mut self,
@@ -293,20 +397,30 @@ impl RaftSnapshotBuilder<TypeConfig> for SnapshotBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anode_protocol::{ChunkId, ObjectManifest};
+    use crate::types::Request;
     use openraft::testing::log_id;
+    use openraft::EntryPayload;
     use tempfile::TempDir;
 
-    fn create_test_storage() -> Arc<StorageEngine> {
+    async fn create_test_storage() -> (Arc<StorageEngine>, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        Arc::new(StorageEngine::new(temp_dir.path().to_path_buf()).unwrap())
+        let storage_config = anode_storage::StorageConfig {
+            data_dir: temp_dir.path().join("blobs"),
+            metadata_dir: temp_dir.path().join("metadata"),
+            chunk_size: anode_storage::chunks::CHUNK_SIZE,
+            sync_writes: false,
+        };
+        (
+            Arc::new(StorageEngine::open(storage_config).await.unwrap()),
+            temp_dir,
+        )
     }
 
     #[tokio::test]
     async fn test_state_machine_create() {
-        let storage = create_test_storage();
+        let (storage, _temp) = create_test_storage().await;
         let temp_dir = TempDir::new().unwrap();
-        let sm = StateMachine::new(storage, temp_dir.path().to_path_buf());
+        let mut sm = StateMachine::new(storage, temp_dir.path().to_path_buf());
 
         let (last_applied, _) = sm.applied_state().await.unwrap();
         assert_eq!(last_applied, None);
@@ -314,7 +428,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_create_bucket() {
-        let storage = create_test_storage();
+        let (storage, _temp) = create_test_storage().await;
         let temp_dir = TempDir::new().unwrap();
         let mut sm = StateMachine::new(storage, temp_dir.path().to_path_buf());
 
@@ -343,21 +457,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_apply_delete_bucket() {
-        let storage = create_test_storage();
+        let (storage, _temp) = create_test_storage().await;
         let temp_dir = TempDir::new().unwrap();
         let mut sm = StateMachine::new(storage, temp_dir.path().to_path_buf());
 
         // First create a bucket
-        sm.buckets
-            .write()
-            .insert(
-                "test-bucket".to_string(),
-                BucketConfig {
-                    name: "test-bucket".to_string(),
-                    replication_factor: 3,
-                    created_at: 0,
-                },
-            );
+        sm.buckets.write().insert(
+            "test-bucket".to_string(),
+            BucketConfig {
+                name: "test-bucket".to_string(),
+                replication_factor: 3,
+                created_at: 0,
+            },
+        );
 
         let entry = Entry {
             log_id: log_id(1, 1, 1),
@@ -378,37 +490,135 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_apply_put_object() {
+        use anode_protocol::{ChunkId, ObjectKey};
+
+        let (storage, _temp) = create_test_storage().await;
+        let temp_dir = TempDir::new().unwrap();
+        let mut sm = StateMachine::new(storage, temp_dir.path().to_path_buf());
+
+        // First create a bucket (required for PutObject)
+        sm.buckets.write().insert(
+            "test-bucket".to_string(),
+            BucketConfig {
+                name: "test-bucket".to_string(),
+                replication_factor: 3,
+                created_at: 0,
+            },
+        );
+
+        // Create a test manifest
+        let chunk_id = ChunkId::from_hash(&[0u8; 32]).expect("Failed to create ChunkId");
+        let manifest = anode_protocol::ObjectManifest::new(
+            ObjectKey::new("test-bucket", "test-key"),
+            100,
+            [0u8; 32],
+            vec![chunk_id],
+        );
+
+        let entry = Entry {
+            log_id: log_id(1, 1, 1),
+            payload: EntryPayload::Normal(Request {
+                client_id: "test".to_string(),
+                serial: 1,
+                command: Command::PutObject {
+                    bucket: "test-bucket".to_string(),
+                    key: "test-key".to_string(),
+                    manifest: manifest.clone(),
+                },
+            }),
+        };
+
+        let responses = sm.apply(vec![entry]).await.unwrap();
+        assert_eq!(responses.len(), 1);
+        assert!(responses[0].success);
+
+        // Verify the response contains the manifest
+        assert!(responses[0].data.is_some());
+        match &responses[0].data {
+            Some(crate::types::ResponseData::ObjectManifest(m)) => {
+                assert_eq!(m.key.bucket, "test-bucket");
+                assert_eq!(m.key.key, "test-key");
+                assert_eq!(m.total_size, 100);
+            },
+            _ => panic!("Expected ObjectManifest in response data"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_apply_delete_object() {
+        let (storage, _temp) = create_test_storage().await;
+        let temp_dir = TempDir::new().unwrap();
+        let mut sm = StateMachine::new(storage.clone(), temp_dir.path().to_path_buf());
+
+        // Create bucket in storage engine metadata (required for delete_object)
+        let bucket_cfg = anode_storage::BucketConfig {
+            name: "test-bucket".to_string(),
+            versioning_enabled: false,
+            created_at: 0,
+            metadata: std::collections::BTreeMap::new(),
+            quota_bytes: None,
+        };
+        storage
+            .create_bucket("test-bucket", bucket_cfg)
+            .await
+            .unwrap();
+
+        // Also add to state machine buckets
+        sm.buckets.write().insert(
+            "test-bucket".to_string(),
+            BucketConfig {
+                name: "test-bucket".to_string(),
+                replication_factor: 3,
+                created_at: 0,
+            },
+        );
+
+        let entry = Entry {
+            log_id: log_id(1, 1, 1),
+            payload: EntryPayload::Normal(Request {
+                client_id: "test".to_string(),
+                serial: 1,
+                command: Command::DeleteObject {
+                    bucket: "test-bucket".to_string(),
+                    key: "test-key".to_string(),
+                },
+            }),
+        };
+
+        let responses = sm.apply(vec![entry]).await.unwrap();
+        assert_eq!(responses.len(), 1);
+        // Delete of non-existent object should succeed (idempotent)
+        assert!(responses[0].success);
+    }
+
+    #[tokio::test]
     async fn test_snapshot_build() {
-        let storage = create_test_storage();
+        let (storage, _temp) = create_test_storage().await;
         let temp_dir = TempDir::new().unwrap();
         let mut sm = StateMachine::new(storage, temp_dir.path().to_path_buf());
 
         // Create a bucket
-        sm.buckets
-            .write()
-            .insert(
-                "test-bucket".to_string(),
-                BucketConfig {
-                    name: "test-bucket".to_string(),
-                    replication_factor: 3,
-                    created_at: 0,
-                },
-            );
+        sm.buckets.write().insert(
+            "test-bucket".to_string(),
+            BucketConfig {
+                name: "test-bucket".to_string(),
+                replication_factor: 3,
+                created_at: 0,
+            },
+        );
 
         *sm.last_applied.write() = Some(log_id(1, 1, 5));
 
         let mut builder = sm.get_snapshot_builder().await;
         let snapshot = builder.build_snapshot().await.unwrap();
 
-        assert_eq!(
-            snapshot.meta.last_log_id,
-            Some(log_id(1, 1, 5))
-        );
+        assert_eq!(snapshot.meta.last_log_id, Some(log_id(1, 1, 5)));
     }
 
     #[tokio::test]
     async fn test_install_snapshot() {
-        let storage = create_test_storage();
+        let (storage, _temp) = create_test_storage().await;
         let temp_dir = TempDir::new().unwrap();
         let mut sm = StateMachine::new(storage, temp_dir.path().to_path_buf());
 

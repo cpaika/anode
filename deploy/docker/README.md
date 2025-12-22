@@ -435,6 +435,9 @@ docker-compose down
 ### Running Tests
 
 ```bash
+# Cluster health test (recommended for validating deployment)
+./scripts/test-cluster-health.sh
+
 # Unit tests
 docker-compose exec anode-1 cargo test
 
@@ -444,6 +447,14 @@ docker-compose exec anode-1 cargo test --test integration
 # Chaos tests
 docker-compose -f docker-compose.chaos.yml up
 ```
+
+The cluster health test (`test-cluster-health.sh`) performs a comprehensive validation:
+- Builds Docker images
+- Starts a 3-node cluster
+- Waits for all nodes to become healthy
+- Verifies health, liveness, and readiness endpoints
+- Tests basic S3 operations (create bucket, upload, download, delete)
+- Automatically cleans up resources
 
 ### Debugging
 

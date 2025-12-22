@@ -28,10 +28,46 @@ name = "parquet"
 harness = false
 path = "parquet.rs"
 
+[[bench]]
+name = "parquet_vs_minio"
+harness = false
+path = "parquet_vs_minio.rs"
+
+[[bench]]
+name = "concurrent_put"
+harness = false
+path = "concurrent_put.rs"
+
+[[bench]]
+name = "concurrent_get"
+harness = false
+path = "concurrent_get.rs"
+
+[[bench]]
+name = "mixed_workload"
+harness = false
+path = "mixed_workload.rs"
+
+[[bench]]
+name = "deduplication"
+harness = false
+path = "deduplication.rs"
+
+[[bench]]
+name = "raft_log"
+harness = false
+path = "raft_log.rs"
+
+[[bench]]
+name = "raft_replication"
+harness = false
+path = "raft_replication.rs"
+
 [dependencies]
 anode-storage = { path = "../crates/anode-storage" }
 anode-protocol = { path = "../crates/anode-protocol" }
 anode-client = { path = "../crates/anode-client" }
+anode-raft = { path = "../crates/anode-raft" }
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 tokio = { version = "1", features = ["full"] }
 rand = "0.8"
@@ -40,6 +76,11 @@ bytes = "1"
 sysinfo = "0.30"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+sha2 = "0.10"
+openraft = { version = "0.9", features = ["serde", "storage-v2"] }
+bincode = "1"
+redb = "2"
+parking_lot = "0.12"
 
 [dev-dependencies]
 anyhow = "1"

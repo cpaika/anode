@@ -224,9 +224,15 @@ impl MetricsReporter {
                 "| Success Rate | {:.2}% |\n",
                 snapshot.success_rate * 100.0
             ));
-            report.push_str(&format!("| Throughput | {:.2} ops/sec |\n", snapshot.throughput));
+            report.push_str(&format!(
+                "| Throughput | {:.2} ops/sec |\n",
+                snapshot.throughput
+            ));
             report.push_str(&format!("| Latency (min) | {:?} |\n", snapshot.latency_min));
-            report.push_str(&format!("| Latency (mean) | {:?} |\n", snapshot.latency_mean));
+            report.push_str(&format!(
+                "| Latency (mean) | {:?} |\n",
+                snapshot.latency_mean
+            ));
             report.push_str(&format!("| Latency (p50) | {:?} |\n", snapshot.latency_p50));
             report.push_str(&format!("| Latency (p95) | {:?} |\n", snapshot.latency_p95));
             report.push_str(&format!("| Latency (p99) | {:?} |\n", snapshot.latency_p99));

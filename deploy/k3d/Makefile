@@ -83,6 +83,9 @@ status: ## Show cluster and deployment status
 	@kubectl get pvc -n $(NAMESPACE) 2>/dev/null || echo "  No PVCs found"
 
 # Test individual components
+test-helm-install: ## Run Helm install test only
+	@./tests/test_helm_install.sh
+
 test-deployment: ## Run deployment test only
 	@./tests/test_deployment.sh
 

@@ -12,7 +12,7 @@
 //   aws --endpoint-url http://localhost:8080 s3 ls s3://my-bucket
 
 use anode_s3::{AuthConfig, S3Router};
-use anode_storage::{StorageEngine, StorageConfig};
+use anode_storage::{StorageConfig, StorageEngine};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;

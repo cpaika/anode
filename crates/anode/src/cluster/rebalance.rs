@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use std::time::Duration;
 use anode_protocol::ChunkId;
 use anode_storage::StorageEngine;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::{RwLock, Semaphore};
 use tracing::{debug, info, warn};
@@ -78,7 +78,7 @@ pub struct ChunkTransfer {
     pub size: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RebalanceResult {
     pub chunks_transferred: u64,
     pub bytes_transferred: u64,
@@ -200,7 +200,10 @@ impl Rebalancer {
 
     /// Execute rebalance plan
     pub async fn execute(&self, plan: &RebalancePlan) -> Result<RebalanceResult, RebalanceError> {
-        info!("Executing rebalance plan with {} transfers", plan.transfers.len());
+        info!(
+            "Executing rebalance plan with {} transfers",
+            plan.transfers.len()
+        );
 
         // Check if rebalance already in progress
         {
@@ -262,15 +265,15 @@ impl Rebalancer {
                         *completed_transfers += 1;
                         *bytes += size;
                     }
-                }
+                },
                 Ok(Err(e)) => {
                     warn!("Transfer failed: {}", e);
                     errors.push(e.to_string());
-                }
+                },
                 Err(e) => {
                     warn!("Transfer task failed: {}", e);
                     errors.push(e.to_string());
-                }
+                },
             }
         }
 
@@ -358,33 +361,29 @@ impl Rebalancer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use anode_raft::{RaftStorage, StateMachine, Network, AnodeRaft};
-    use anode_storage::engine::StorageConfig;
     use super::super::discovery::Discovery;
+    use super::*;
+    use anode_raft::create_raft_node;
+    use anode_storage::StorageConfig;
     use tempfile::TempDir;
 
     async fn create_test_rebalancer() -> (Rebalancer, TempDir) {
         let temp_dir = TempDir::new().unwrap();
 
         // Create storage
-        let storage_config = StorageConfig::new(temp_dir.path().to_path_buf());
+        let storage_config = StorageConfig {
+            data_dir: temp_dir.path().join("blobs"),
+            metadata_dir: temp_dir.path().join("metadata"),
+            chunk_size: anode_storage::chunks::CHUNK_SIZE,
+            sync_writes: false,
+        };
         let storage = Arc::new(StorageEngine::open(storage_config).await.unwrap());
 
         // Create raft
-        let raft_storage = Arc::new(
-            RaftStorage::open(temp_dir.path().join("raft.db"))
-                .await
-                .unwrap()
-        );
-        let state_machine = Arc::new(StateMachine::new());
-        let network = Arc::new(Network::new());
-
-        let raft_config = openraft::Config::default();
         let raft = Arc::new(
-            AnodeRaft::new(1, raft_config, network, raft_storage, state_machine)
+            create_raft_node(1, "test-cluster", temp_dir.path().join("raft"), storage.clone())
                 .await
-                .unwrap()
+                .unwrap(),
         );
 
         // Create membership
@@ -458,15 +457,20 @@ mod tests {
     async fn test_execute_plan_with_transfers() {
         let (rebalancer, _temp) = create_test_rebalancer().await;
 
+        let mut chunk1_bytes = [0u8; 32];
+        chunk1_bytes[..6].copy_from_slice(b"chunk1");
+        let mut chunk2_bytes = [0u8; 32];
+        chunk2_bytes[..6].copy_from_slice(b"chunk2");
+
         let transfers = vec![
             ChunkTransfer {
-                chunk_id: ChunkId("chunk1".to_string()),
+                chunk_id: ChunkId(chunk1_bytes),
                 from: 1,
                 to: 2,
                 size: 1024,
             },
             ChunkTransfer {
-                chunk_id: ChunkId("chunk2".to_string()),
+                chunk_id: ChunkId(chunk2_bytes),
                 from: 1,
                 to: 2,
                 size: 2048,
@@ -488,14 +492,15 @@ mod tests {
     async fn test_status_during_execution() {
         let (rebalancer, _temp) = create_test_rebalancer().await;
 
-        let transfers = vec![
-            ChunkTransfer {
-                chunk_id: ChunkId("chunk1".to_string()),
-                from: 1,
-                to: 2,
-                size: 1024,
-            },
-        ];
+        let mut chunk1_bytes = [0u8; 32];
+        chunk1_bytes[..6].copy_from_slice(b"chunk1");
+
+        let transfers = vec![ChunkTransfer {
+            chunk_id: ChunkId(chunk1_bytes),
+            from: 1,
+            to: 2,
+            size: 1024,
+        }];
 
         let plan = RebalancePlan {
             transfers,
@@ -506,27 +511,26 @@ mod tests {
         let rebalancer_clone = Arc::new(rebalancer);
         let rebalancer_ref = rebalancer_clone.clone();
 
-        tokio::spawn(async move {
-            rebalancer_ref.execute(&plan).await
-        });
+        tokio::spawn(async move { rebalancer_ref.execute(&plan).await });
 
         // Give it a moment to start
         tokio::time::sleep(Duration::from_millis(1)).await;
 
         // Check status - it might be InProgress or Completed depending on timing
         let status = rebalancer_clone.status().await;
-        assert!(
-            matches!(
-                status,
-                RebalanceStatus::InProgress { .. } | RebalanceStatus::Completed { .. }
-            )
-        );
+        assert!(matches!(
+            status,
+            RebalanceStatus::InProgress { .. } | RebalanceStatus::Completed { .. }
+        ));
     }
 
     #[test]
     fn test_chunk_transfer_serialization() {
+        let mut chunk_bytes = [0u8; 32];
+        chunk_bytes[..10].copy_from_slice(b"test-chunk");
+
         let transfer = ChunkTransfer {
-            chunk_id: ChunkId("test-chunk".to_string()),
+            chunk_id: ChunkId(chunk_bytes),
             from: 1,
             to: 2,
             size: 1024,

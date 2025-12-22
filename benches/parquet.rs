@@ -25,17 +25,13 @@ fn bench_parquet_metadata_parse(c: &mut Criterion) {
         let parquet_data = generate_parquet_file(*rows);
 
         group.throughput(Throughput::Elements(*rows as u64));
-        group.bench_with_input(
-            BenchmarkId::new("parse_footer", rows),
-            rows,
-            |b, _| {
-                b.iter(|| {
-                    // Mock Parquet footer parsing
-                    let metadata = parse_parquet_metadata(&parquet_data);
-                    metadata
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("parse_footer", rows), rows, |b, _| {
+            b.iter(|| {
+                // Mock Parquet footer parsing
+                let metadata = parse_parquet_metadata(&parquet_data);
+                metadata
+            });
+        });
     }
 
     group.finish();

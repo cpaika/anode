@@ -21,18 +21,10 @@
 .idea/
 *.tmproj
 .vscode/
-# Helm files
-.helmignore
 # CI/CD
 .github/
 .gitlab-ci.yml
-# Testing
-test/
-tests/
 # Documentation source files
 *.md.gotmpl
-# Development files
-values-*.yaml
-!values.yaml
-# Examples
-examples/
+# Scripts
+*.sh

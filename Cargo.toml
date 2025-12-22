@@ -10,6 +10,7 @@ members = [
     "crates/anode-client",
     "tests/harness",
     "tests/correctness",
+    "tests/chaos",
     "tests/integration",
     "benches",
 ]

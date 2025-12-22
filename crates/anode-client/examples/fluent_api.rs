@@ -6,8 +6,8 @@ use bytes::Bytes;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a client configuration
-    let config = ClientConfig::new("http://localhost:8080")
-        .with_credentials("minioadmin", "minioadmin");
+    let config =
+        ClientConfig::new("http://localhost:8080").with_credentials("minioadmin", "minioadmin");
 
     let client = AnodeClient::new(config)?;
 
@@ -49,7 +49,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Copy object
     println!("  Copying object...");
-    object.copy_to("fluent-example", "document-copy.txt").await?;
+    object
+        .copy_to("fluent-example", "document-copy.txt")
+        .await?;
     println!("    ✓ Object copied\n");
 
     // List objects

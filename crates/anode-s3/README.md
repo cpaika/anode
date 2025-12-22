@@ -61,7 +61,7 @@ use std::path::PathBuf;
 async fn main() {
     // Create storage engine
     let storage = Arc::new(
-        StorageEngine::new(PathBuf::from("./data")).unwrap()
+        StorageEngine::new(PathBuf::from("./data"))
     );
 
     // Create S3 router (no auth for simplicity)

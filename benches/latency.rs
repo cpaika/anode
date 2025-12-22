@@ -156,6 +156,38 @@ fn bench_list_latency(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark LIST 10K objects latency
+///
+/// Dedicated benchmark for listing all 10,000 objects to measure full listing latency.
+/// This is important for understanding the performance impact of large directory listings.
+fn bench_list_10k_latency(c: &mut Criterion) {
+    let mut group = c.benchmark_group("list_10k_latency");
+
+    // Pre-populate 10K mock objects
+    let objects: Vec<_> = (0..10000)
+        .map(|i| format!("bucket/prefix/object-{:05}", i))
+        .collect();
+
+    group.bench_function("list_10k_objects", |b| {
+        b.iter_custom(|iters| {
+            let mut latencies = Vec::new();
+
+            for _ in 0..iters {
+                let start = Instant::now();
+
+                // Mock LIST operation for all 10K objects
+                let _results = list_objects("bucket", "prefix/", 10000, &objects);
+
+                latencies.push(start.elapsed());
+            }
+
+            latencies.iter().sum()
+        });
+    });
+
+    group.finish();
+}
+
 /// Benchmark time-to-first-byte latency
 ///
 /// Measures how quickly the first byte of data is returned for GET operations.
@@ -345,6 +377,7 @@ criterion_group!(
     bench_get_latency,
     bench_head_latency,
     bench_list_latency,
+    bench_list_10k_latency,
     bench_first_byte_latency,
     bench_delete_latency,
     bench_multipart_initiate_latency,

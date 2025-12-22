@@ -37,8 +37,9 @@ impl ProcessChaos {
             tokio::time::sleep(duration).await;
 
             // Send SIGCONT to resume
-            kill(pid, Signal::SIGCONT)
-                .map_err(|e| ChaosError::ProcessChaos(format!("Failed to resume process: {}", e)))?;
+            kill(pid, Signal::SIGCONT).map_err(|e| {
+                ChaosError::ProcessChaos(format!("Failed to resume process: {}", e))
+            })?;
 
             info!("Process {} resumed", pid);
         }
@@ -80,9 +81,7 @@ impl ProcessChaos {
                 .map_err(|e| ChaosError::ProcessChaos(format!("Failed to kill process: {}", e)))?;
 
             if !output.status.success() {
-                return Err(ChaosError::ProcessChaos(
-                    "Kill command failed".to_string(),
-                ));
+                return Err(ChaosError::ProcessChaos("Kill command failed".to_string()));
             }
         }
 
@@ -100,8 +99,9 @@ impl ProcessChaos {
 
             let pid = Pid::from_raw(pid as i32);
 
-            kill(pid, Signal::SIGTERM)
-                .map_err(|e| ChaosError::ProcessChaos(format!("Failed to terminate process: {}", e)))?;
+            kill(pid, Signal::SIGTERM).map_err(|e| {
+                ChaosError::ProcessChaos(format!("Failed to terminate process: {}", e))
+            })?;
 
             debug!("Process {} terminated", pid);
         }
@@ -123,13 +123,20 @@ impl ProcessChaos {
         // Example: cpulimit -p <pid> -l <limit>
 
         let output = Command::new("cpulimit")
-            .args(&[
-                "-p", &pid.to_string(),
-                "-l", &limit_percent.to_string(),
+            .args([
+                "-p",
+                &pid.to_string(),
+                "-l",
+                &limit_percent.to_string(),
                 "-b", // Run in background
             ])
             .output()
-            .map_err(|e| ChaosError::ProcessChaos(format!("Failed to limit CPU (is cpulimit installed?): {}", e)))?;
+            .map_err(|e| {
+                ChaosError::ProcessChaos(format!(
+                    "Failed to limit CPU (is cpulimit installed?): {}",
+                    e
+                ))
+            })?;
 
         if !output.status.success() {
             return Err(ChaosError::ProcessChaos(
@@ -147,19 +154,18 @@ impl ProcessChaos {
         #[cfg(target_os = "linux")]
         {
             // Use taskset on Linux
-            let cpu_list = cpus.iter()
+            let cpu_list = cpus
+                .iter()
                 .map(|c| c.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
 
             let output = Command::new("taskset")
-                .args(&[
-                    "-cp",
-                    &cpu_list,
-                    &pid.to_string(),
-                ])
+                .args(&["-cp", &cpu_list, &pid.to_string()])
                 .output()
-                .map_err(|e| ChaosError::ProcessChaos(format!("Failed to set CPU affinity: {}", e)))?;
+                .map_err(|e| {
+                    ChaosError::ProcessChaos(format!("Failed to set CPU affinity: {}", e))
+                })?;
 
             if !output.status.success() {
                 return Err(ChaosError::ProcessChaos(
@@ -171,17 +177,18 @@ impl ProcessChaos {
         #[cfg(not(target_os = "linux"))]
         {
             warn!("CPU affinity setting not implemented for this platform");
-            return Err(ChaosError::ProcessChaos(
+            Err(ChaosError::ProcessChaos(
                 "CPU affinity not supported on this platform".to_string(),
-            ));
+            ))
         }
-
-        Ok(())
     }
 
     /// Inject memory pressure by allocating memory
     pub async fn inject_memory_pressure(&self, megabytes: usize, duration: Duration) -> Result<()> {
-        info!("Injecting {} MB of memory pressure for {:?}", megabytes, duration);
+        info!(
+            "Injecting {} MB of memory pressure for {:?}",
+            megabytes, duration
+        );
 
         // This would spawn a process that allocates memory
         // For now, just a placeholder

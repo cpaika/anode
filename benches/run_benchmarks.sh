@@ -254,12 +254,29 @@ if [ -n "${COMPARE_WITH}" ]; then
     fi
 fi
 
+# Generate benchmark report
+echo ""
+echo -e "${YELLOW}Generating benchmark report...${NC}"
+if [ -f "${BENCHMARK_DIR}/generate_report.py" ]; then
+    if python3 "${BENCHMARK_DIR}/generate_report.py" \
+        --results-dir "${RESULTS_SUBDIR}" \
+        --output "${PROJECT_ROOT}/BENCHMARKS.md"; then
+        echo -e "${GREEN}✓ Benchmark report generated${NC}"
+        echo "  - Report: ${PROJECT_ROOT}/BENCHMARKS.md"
+    else
+        echo -e "${YELLOW}Warning: Failed to generate benchmark report${NC}"
+    fi
+else
+    echo -e "${YELLOW}Warning: generate_report.py not found, skipping report generation${NC}"
+fi
+
 echo ""
 echo -e "${GREEN}Done!${NC}"
 echo "View results:"
 echo "  - System info: ${RESULTS_SUBDIR}/system_info.txt"
 echo "  - Summary: ${RESULTS_SUBDIR}/summary.txt"
 echo "  - HTML report: file://${PROJECT_ROOT}/target/criterion/report/index.html"
+echo "  - Markdown report: ${PROJECT_ROOT}/BENCHMARKS.md"
 
 if [ ${#FAILED_BENCHMARKS[@]} -ne 0 ]; then
     exit 1

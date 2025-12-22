@@ -3,13 +3,13 @@
 //! Each module implements a specific chaos testing scenario with
 //! comprehensive verification and data integrity checks.
 
-pub mod node_crash;
-pub mod network_partition;
-pub mod disk_failure;
-pub mod slow_network;
-pub mod rolling_restart;
-pub mod split_brain;
 pub mod cascade_failure;
+pub mod disk_failure;
+pub mod network_partition;
+pub mod node_crash;
+pub mod rolling_restart;
+pub mod slow_network;
+pub mod split_brain;
 
 use crate::{ChaosError, Result};
 use anode_test_harness::TestCluster;
@@ -75,13 +75,19 @@ pub trait ChaosScenario: Send + Sync {
     fn description(&self) -> &str;
 
     /// Run the scenario
-    async fn run(&self, cluster: &mut TestCluster, config: &ScenarioConfig) -> Result<ScenarioResult>;
+    async fn run(
+        &self,
+        cluster: &mut TestCluster,
+        config: &ScenarioConfig,
+    ) -> Result<ScenarioResult>;
 
     /// Verify the cluster state after the scenario
     async fn verify(&self, cluster: &TestCluster) -> Result<bool> {
         // Default implementation just checks if nodes are running
         for i in 0..cluster.num_nodes() {
-            let node = cluster.get_node(i).map_err(|e| ChaosError::ScenarioFailed(e.to_string()))?;
+            let node = cluster
+                .get_node(i)
+                .map_err(|e| ChaosError::ScenarioFailed(e.to_string()))?;
             if !node.is_partitioned() {
                 // Node should be accessible
             }

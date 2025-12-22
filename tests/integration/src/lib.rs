@@ -4,12 +4,13 @@
 //! These tests verify end-to-end functionality including S3 API compatibility,
 //! cluster operations, failover scenarios, and performance characteristics.
 
-mod s3_basic;
-mod s3_multipart;
-mod cluster_ops;
-mod failover;
-mod performance;
-mod parquet;
+pub mod cluster_ops;
+pub mod failover;
+pub mod https_connections;
+pub mod parquet;
+pub mod performance;
+pub mod s3_basic;
+pub mod s3_multipart;
 
 use anode_test_harness::{TestCluster, TestHarnessError};
 use aws_config::BehaviorVersion;
@@ -18,8 +19,8 @@ use aws_sdk_s3::Client as S3Client;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::OnceCell;
-use tracing::{info, error};
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing::{error, info};
+use tracing_subscriber::EnvFilter;
 
 /// Global test cluster instance
 static TEST_CLUSTER: OnceCell<Arc<TestCluster>> = OnceCell::const_new();
@@ -29,7 +30,7 @@ pub fn init_logging() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info,anode=debug"))
+                .unwrap_or_else(|_| EnvFilter::new("info,anode=debug")),
         )
         .with_test_writer()
         .try_init();
@@ -48,12 +49,12 @@ pub async fn setup_cluster(num_nodes: usize) -> Result<TestCluster, TestHarnessE
     match cluster.wait_for_leader(Duration::from_secs(30)).await {
         Ok(leader_id) => {
             info!("Cluster ready with leader: {}", leader_id);
-        }
+        },
         Err(e) => {
             error!("Failed to wait for leader: {}", e);
             cluster.stop().await?;
             return Err(e);
-        }
+        },
     }
 
     Ok(cluster)
@@ -61,14 +62,17 @@ pub async fn setup_cluster(num_nodes: usize) -> Result<TestCluster, TestHarnessE
 
 /// Get or create the shared test cluster (3 nodes)
 pub async fn get_shared_cluster() -> Arc<TestCluster> {
-    TEST_CLUSTER.get_or_init(|| async {
-        match setup_cluster(3).await {
-            Ok(cluster) => Arc::new(cluster),
-            Err(e) => {
-                panic!("Failed to setup shared test cluster: {}", e);
+    TEST_CLUSTER
+        .get_or_init(|| async {
+            match setup_cluster(3).await {
+                Ok(cluster) => Arc::new(cluster),
+                Err(e) => {
+                    panic!("Failed to setup shared test cluster: {}", e);
+                },
             }
-        }
-    }).await.clone()
+        })
+        .await
+        .clone()
 }
 
 /// Create an S3 client configured for the test cluster
@@ -120,32 +124,18 @@ pub fn unique_object_key(prefix: &str) -> String {
 /// Cleanup helper to ensure bucket is deleted
 pub async fn cleanup_bucket(client: &S3Client, bucket: &str) {
     // Try to delete all objects first
-    if let Ok(list_output) = client
-        .list_objects_v2()
-        .bucket(bucket)
-        .send()
-        .await
-    {
+    if let Ok(list_output) = client.list_objects_v2().bucket(bucket).send().await {
         if let Some(contents) = list_output.contents {
             for object in contents {
                 if let Some(key) = object.key {
-                    let _ = client
-                        .delete_object()
-                        .bucket(bucket)
-                        .key(&key)
-                        .send()
-                        .await;
+                    let _ = client.delete_object().bucket(bucket).key(&key).send().await;
                 }
             }
         }
     }
 
     // Delete the bucket
-    let _ = client
-        .delete_bucket()
-        .bucket(bucket)
-        .send()
-        .await;
+    let _ = client.delete_bucket().bucket(bucket).send().await;
 }
 
 /// Test fixture that provides a clean bucket for each test

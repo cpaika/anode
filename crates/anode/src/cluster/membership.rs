@@ -1,11 +1,11 @@
+use anode_raft::AnodeRaft;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use anode_raft::AnodeRaft;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 use super::discovery::{Discovery, NodeInfo};
 use crate::cluster::NodeId;
@@ -37,20 +37,8 @@ pub enum MembershipError {
     Timeout,
 }
 
-impl From<openraft::error::RaftError<NodeId>> for MembershipError {
-    fn from(err: openraft::error::RaftError<NodeId>) -> Self {
-        MembershipError::RaftError(err.to_string())
-    }
-}
-
-impl From<openraft::error::CheckIsLeaderError<NodeId>> for MembershipError {
-    fn from(err: openraft::error::CheckIsLeaderError<NodeId>) -> Self {
-        MembershipError::RaftError(err.to_string())
-    }
-}
-
-impl From<openraft::error::ClientWriteError<NodeId>> for MembershipError {
-    fn from(err: openraft::error::ClientWriteError<NodeId>) -> Self {
+impl<E: std::error::Error> From<openraft::error::RaftError<NodeId, E>> for MembershipError {
+    fn from(err: openraft::error::RaftError<NodeId, E>) -> Self {
         MembershipError::RaftError(err.to_string())
     }
 }
@@ -108,7 +96,7 @@ impl MembershipManager {
         }
 
         // Add to raft cluster as learner first
-        let raft_node = anode_raft::network::Node {
+        let raft_node = openraft::BasicNode {
             addr: node.grpc_addr.clone(),
         };
 
@@ -127,7 +115,7 @@ impl MembershipManager {
         let metrics = self.raft.metrics().borrow().clone();
 
         for voter_id in metrics.membership_config.membership().voter_ids() {
-            new_members.insert(*voter_id);
+            new_members.insert(voter_id);
         }
         new_members.insert(node.id);
 
@@ -180,8 +168,8 @@ impl MembershipManager {
         let mut new_members = std::collections::BTreeSet::new();
 
         for voter_id in metrics.membership_config.membership().voter_ids() {
-            if *voter_id != node_id {
-                new_members.insert(*voter_id);
+            if voter_id != node_id {
+                new_members.insert(voter_id);
             }
         }
 
@@ -217,7 +205,7 @@ impl MembershipManager {
     /// Check if we are the leader
     pub async fn is_leader(&self) -> bool {
         self.raft.current_leader().await.is_some()
-            && self.raft.metrics().borrow().state == openraft::State::Leader
+            && self.raft.metrics().borrow().state == openraft::ServerState::Leader
     }
 
     /// Handle node failure detection
@@ -238,7 +226,10 @@ impl MembershipManager {
         // and possibly a grace period before removal
 
         if self.is_leader().await {
-            info!("Leader detected node {} failure, considering removal", node_id);
+            info!(
+                "Leader detected node {} failure, considering removal",
+                node_id
+            );
             // TODO: Implement more sophisticated failure handling
             // For now, we don't automatically remove nodes
         }
@@ -283,7 +274,7 @@ impl MembershipManager {
                 .membership_config
                 .membership()
                 .voter_ids()
-                .any(|id| *id == node_id);
+                .any(|id| id == node_id);
 
             if is_member {
                 HealthStatus::Healthy
@@ -306,9 +297,11 @@ impl MembershipManager {
     pub async fn sync_from_discovery(&self) -> Result<(), MembershipError> {
         info!("Syncing membership from discovery");
 
-        let discovered = self.discovery.discover_all().await.map_err(|e| {
-            MembershipError::DiscoveryError(e.to_string())
-        })?;
+        let discovered = self
+            .discovery
+            .discover_all()
+            .await
+            .map_err(|e| MembershipError::DiscoveryError(e.to_string()))?;
 
         debug!("Discovered {} nodes", discovered.len());
 
@@ -337,43 +330,38 @@ impl MembershipManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anode_raft::{RaftStorage, StateMachine, Network};
+    use anode_raft::create_raft_node;
+    use anode_storage::StorageConfig;
+    use openraft::BasicNode;
     use tempfile::TempDir;
 
     async fn create_test_membership() -> (MembershipManager, TempDir) {
         let temp_dir = TempDir::new().unwrap();
+        let storage_config = StorageConfig {
+            data_dir: temp_dir.path().join("blobs"),
+            metadata_dir: temp_dir.path().join("metadata"),
+            chunk_size: anode_storage::chunks::CHUNK_SIZE,
+            sync_writes: false,
+        };
+        let storage = Arc::new(anode_storage::StorageEngine::open(storage_config).await.unwrap());
 
-        let raft_storage = Arc::new(
-            RaftStorage::open(temp_dir.path().join("raft.db"))
-                .await
-                .unwrap()
-        );
-        let state_machine = Arc::new(StateMachine::new());
-        let network = Arc::new(Network::new());
-
-        let raft_config = openraft::Config::default();
-        let raft = AnodeRaft::new(
-            1,
-            raft_config,
-            network,
-            raft_storage,
-            state_machine,
-        )
-        .await
-        .unwrap();
+        let raft = create_raft_node(1, "test-cluster", temp_dir.path().join("raft"), storage)
+            .await
+            .unwrap();
 
         // Initialize as single-node cluster
         let mut members = std::collections::BTreeMap::new();
         members.insert(
             1,
-            anode_raft::network::Node {
+            BasicNode {
                 addr: "127.0.0.1:6001".to_string(),
             },
         );
-        Arc::new(raft).initialize(members).await.unwrap();
+        let raft = Arc::new(raft);
+        raft.initialize(members).await.unwrap();
 
         let discovery = Arc::new(Discovery::new());
-        let manager = MembershipManager::new(Arc::new(raft), discovery);
+        let manager = MembershipManager::new(raft, discovery);
 
         (manager, temp_dir)
     }

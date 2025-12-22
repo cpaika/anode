@@ -1,40 +1,70 @@
+//! Raft consensus protocol implementation.
+//!
+//! This module implements the core Raft consensus protocol for distributed
+//! log replication and leader election. It provides the gRPC service
+//! definitions for AppendEntries, RequestVote, and InstallSnapshot RPCs.
+//!
+//! # Raft Basics
+//!
+//! Raft is a consensus algorithm that ensures all nodes in a cluster agree
+//! on a sequence of log entries. It provides:
+//!
+//! - **Leader election**: Automatic selection of a leader node
+//! - **Log replication**: Reliable replication of operations across nodes
+//! - **Safety**: Guarantees that committed entries are never lost
+//!
+//! For more details, see the [Raft paper](https://raft.github.io/raft.pdf).
+
 use crate::error::ProtocolResult;
 use crate::proto;
 use std::sync::Arc;
 use tonic::{Request, Response, Status, Streaming};
 
-/// Raft service server implementation
+/// Raft service server implementation.
 ///
 /// This service handles core Raft consensus protocol operations including
-/// log replication, leader election, and snapshot installation.
+/// log replication, leader election, and snapshot installation. It wraps
+/// a [`RaftEngine`] implementation and exposes it as a gRPC service.
 pub struct RaftServiceImpl<R> {
     raft: Arc<R>,
 }
 
 impl<R> RaftServiceImpl<R> {
+    /// Creates a new RaftServiceImpl wrapping the given Raft engine.
     pub fn new(raft: Arc<R>) -> Self {
         Self { raft }
     }
 }
 
-/// Trait that must be implemented by the Raft consensus engine
+/// Trait that must be implemented by the Raft consensus engine.
 ///
-/// This trait abstracts the actual Raft implementation from the gRPC service layer.
+/// This trait abstracts the actual Raft implementation from the gRPC service
+/// layer. Implementors provide the core Raft consensus logic.
 #[tonic::async_trait]
 pub trait RaftEngine: Send + Sync + 'static {
-    /// Handle AppendEntries RPC from leader
+    /// Handles AppendEntries RPC from the leader.
+    ///
+    /// This RPC is used both for log replication and as a heartbeat.
+    /// Followers use this to stay synchronized with the leader's log.
     async fn append_entries(
         &self,
         request: proto::raft::AppendEntriesRequest,
     ) -> ProtocolResult<proto::raft::AppendEntriesResponse>;
 
-    /// Handle RequestVote RPC from candidate
+    /// Handles RequestVote RPC from a candidate.
+    ///
+    /// During leader election, candidates send this RPC to request votes
+    /// from other nodes. Nodes vote for at most one candidate per term.
     async fn request_vote(
         &self,
         request: proto::raft::VoteRequest,
     ) -> ProtocolResult<proto::raft::VoteResponse>;
 
-    /// Handle InstallSnapshot RPC from leader (streaming)
+    /// Handles InstallSnapshot RPC from the leader (streaming).
+    ///
+    /// When a follower is too far behind, the leader sends a snapshot
+    /// instead of individual log entries. This is a streaming RPC to
+    /// handle large snapshots efficiently.
     async fn install_snapshot(
         &self,
         stream: Streaming<proto::raft::InstallSnapshotRequest>,
@@ -64,14 +94,10 @@ impl<R: RaftEngine> proto::raft::raft_service_server::RaftService for RaftServic
             "Received AppendEntries request"
         );
 
-        let response = self
-            .raft
-            .append_entries(req)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "AppendEntries failed");
-                Status::from(e)
-            })?;
+        let response = self.raft.append_entries(req).await.map_err(|e| {
+            tracing::error!(error = %e, "AppendEntries failed");
+            Status::from(e)
+        })?;
 
         tracing::debug!(
             term = response.term,
@@ -101,14 +127,10 @@ impl<R: RaftEngine> proto::raft::raft_service_server::RaftService for RaftServic
             "Received Vote request"
         );
 
-        let response = self
-            .raft
-            .request_vote(req)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "Vote request failed");
-                Status::from(e)
-            })?;
+        let response = self.raft.request_vote(req).await.map_err(|e| {
+            tracing::error!(error = %e, "Vote request failed");
+            Status::from(e)
+        })?;
 
         tracing::debug!(
             term = response.term,
@@ -131,14 +153,10 @@ impl<R: RaftEngine> proto::raft::raft_service_server::RaftService for RaftServic
 
         tracing::info!("Starting InstallSnapshot streaming RPC");
 
-        let response = self
-            .raft
-            .install_snapshot(stream)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "InstallSnapshot failed");
-                Status::from(e)
-            })?;
+        let response = self.raft.install_snapshot(stream).await.map_err(|e| {
+            tracing::error!(error = %e, "InstallSnapshot failed");
+            Status::from(e)
+        })?;
 
         tracing::info!(term = response.term, "InstallSnapshot completed");
 
@@ -146,32 +164,35 @@ impl<R: RaftEngine> proto::raft::raft_service_server::RaftService for RaftServic
     }
 }
 
-/// Helper functions for working with Raft log entries
+/// Helper functions for working with Raft log entries.
+///
+/// This module provides type-checking utilities for examining the payload
+/// of log entries to determine what kind of command they contain.
 pub mod log_entry {
     use crate::proto::raft::log_entry::Payload;
     use crate::proto::raft::LogEntry;
 
-    /// Check if a log entry is a PutObject command
+    /// Checks if a log entry is a PutObject command.
     pub fn is_put_object(entry: &LogEntry) -> bool {
         matches!(entry.payload, Some(Payload::PutObject(_)))
     }
 
-    /// Check if a log entry is a DeleteObject command
+    /// Checks if a log entry is a DeleteObject command.
     pub fn is_delete_object(entry: &LogEntry) -> bool {
         matches!(entry.payload, Some(Payload::DeleteObject(_)))
     }
 
-    /// Check if a log entry is a CreateBucket command
+    /// Checks if a log entry is a CreateBucket command.
     pub fn is_create_bucket(entry: &LogEntry) -> bool {
         matches!(entry.payload, Some(Payload::CreateBucket(_)))
     }
 
-    /// Check if a log entry is a DeleteBucket command
+    /// Checks if a log entry is a DeleteBucket command.
     pub fn is_delete_bucket(entry: &LogEntry) -> bool {
         matches!(entry.payload, Some(Payload::DeleteBucket(_)))
     }
 
-    /// Check if a log entry is a MembershipChange command
+    /// Checks if a log entry is a MembershipChange command.
     pub fn is_membership_change(entry: &LogEntry) -> bool {
         matches!(entry.payload, Some(Payload::Membership(_)))
     }
@@ -181,10 +202,10 @@ pub mod log_entry {
 mod tests {
     use super::*;
     use crate::error::ProtocolError;
-    use crate::proto::raft::raft_service_server::RaftService;
-    use crate::proto::raft::log_entry::Payload;
-    use crate::proto::raft::*;
     use crate::proto::common;
+    use crate::proto::raft::log_entry::Payload;
+    use crate::proto::raft::raft_service_server::RaftService;
+    use crate::proto::raft::*;
 
     struct MockRaftEngine {
         current_term: u64,
@@ -203,10 +224,7 @@ mod tests {
             })
         }
 
-        async fn request_vote(
-            &self,
-            request: VoteRequest,
-        ) -> ProtocolResult<VoteResponse> {
+        async fn request_vote(&self, request: VoteRequest) -> ProtocolResult<VoteResponse> {
             Ok(VoteResponse {
                 term: self.current_term,
                 vote_granted: request.term > self.current_term,
@@ -218,9 +236,11 @@ mod tests {
             mut stream: Streaming<InstallSnapshotRequest>,
         ) -> ProtocolResult<InstallSnapshotResponse> {
             // Consume the stream
-            while let Some(_chunk) = stream.message().await.map_err(|e| {
-                ProtocolError::Internal(format!("Stream error: {}", e))
-            })? {
+            while let Some(_chunk) = stream
+                .message()
+                .await
+                .map_err(|e| ProtocolError::Internal(format!("Stream error: {}", e)))?
+            {
                 // Process chunk
             }
 
@@ -316,9 +336,7 @@ mod tests {
         let put_entry = LogEntry {
             term: 1,
             index: 1,
-            payload: Some(Payload::PutObject(PutObjectCommand {
-                manifest: None,
-            })),
+            payload: Some(Payload::PutObject(PutObjectCommand { manifest: None })),
         };
         assert!(super::log_entry::is_put_object(&put_entry));
         assert!(!super::log_entry::is_delete_object(&put_entry));
@@ -326,9 +344,7 @@ mod tests {
         let delete_entry = LogEntry {
             term: 1,
             index: 2,
-            payload: Some(Payload::DeleteObject(DeleteObjectCommand {
-                key: None,
-            })),
+            payload: Some(Payload::DeleteObject(DeleteObjectCommand { key: None })),
         };
         assert!(super::log_entry::is_delete_object(&delete_entry));
         assert!(!super::log_entry::is_put_object(&delete_entry));

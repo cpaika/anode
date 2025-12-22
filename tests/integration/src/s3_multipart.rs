@@ -8,10 +8,7 @@
 //! - Listing parts
 //! - Large object uploads
 
-use crate::{
-    setup_cluster, create_test_s3_client, random_bytes, unique_object_key,
-    BucketFixture,
-};
+use crate::{random_bytes, setup_cluster, unique_object_key, BucketFixture};
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
 use bytes::Bytes;
@@ -26,7 +23,8 @@ async fn test_multipart_upload() {
     let key = unique_object_key("multipart-object");
 
     // Initiate multipart upload
-    let create_result = fixture.client
+    let create_result = fixture
+        .client
         .create_multipart_upload()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -43,7 +41,8 @@ async fn test_multipart_upload() {
     for part_number in 1..=3 {
         let part_data = random_bytes(part_size);
 
-        let upload_result = fixture.client
+        let upload_result = fixture
+            .client
             .upload_part()
             .bucket(&fixture.bucket)
             .key(&key)
@@ -67,7 +66,8 @@ async fn test_multipart_upload() {
         .set_parts(Some(completed_parts))
         .build();
 
-    let complete_result = fixture.client
+    let complete_result = fixture
+        .client
         .complete_multipart_upload()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -83,7 +83,8 @@ async fn test_multipart_upload() {
     );
 
     // Verify object exists and has correct size
-    let head_result = fixture.client
+    let head_result = fixture
+        .client
         .head_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -107,7 +108,8 @@ async fn test_multipart_abort() {
     let key = unique_object_key("multipart-object");
 
     // Initiate multipart upload
-    let create_result = fixture.client
+    let create_result = fixture
+        .client
         .create_multipart_upload()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -119,7 +121,8 @@ async fn test_multipart_abort() {
 
     // Upload one part
     let part_data = random_bytes(5 * 1024 * 1024);
-    fixture.client
+    fixture
+        .client
         .upload_part()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -131,7 +134,8 @@ async fn test_multipart_abort() {
         .unwrap();
 
     // Abort multipart upload
-    let abort_result = fixture.client
+    let abort_result = fixture
+        .client
         .abort_multipart_upload()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -146,17 +150,15 @@ async fn test_multipart_abort() {
     );
 
     // Verify object doesn't exist
-    let head_result = fixture.client
+    let head_result = fixture
+        .client
         .head_object()
         .bucket(&fixture.bucket)
         .key(&key)
         .send()
         .await;
 
-    assert!(
-        head_result.is_err(),
-        "Object should not exist after abort"
-    );
+    assert!(head_result.is_err(), "Object should not exist after abort");
 }
 
 #[tokio::test]
@@ -168,7 +170,8 @@ async fn test_multipart_list_parts() {
     let key = unique_object_key("multipart-object");
 
     // Initiate multipart upload
-    let create_result = fixture.client
+    let create_result = fixture
+        .client
         .create_multipart_upload()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -182,7 +185,8 @@ async fn test_multipart_list_parts() {
     let part_size = 5 * 1024 * 1024;
     for part_number in 1..=3 {
         let part_data = random_bytes(part_size);
-        fixture.client
+        fixture
+            .client
             .upload_part()
             .bucket(&fixture.bucket)
             .key(&key)
@@ -195,7 +199,8 @@ async fn test_multipart_list_parts() {
     }
 
     // List parts
-    let list_result = fixture.client
+    let list_result = fixture
+        .client
         .list_parts()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -222,7 +227,8 @@ async fn test_multipart_list_parts() {
     }
 
     // Cleanup - abort the upload
-    fixture.client
+    fixture
+        .client
         .abort_multipart_upload()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -241,7 +247,8 @@ async fn test_large_object_multipart() {
     let key = unique_object_key("large-object");
 
     // Initiate multipart upload
-    let create_result = fixture.client
+    let create_result = fixture
+        .client
         .create_multipart_upload()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -252,14 +259,15 @@ async fn test_large_object_multipart() {
     let upload_id = create_result.upload_id().unwrap();
 
     // Upload 100MB object in 10MB parts
-    let part_size = 10 * 1024 * 1024; // 10MB
-    let num_parts = 10;
+    let part_size: usize = 10 * 1024 * 1024; // 10MB
+    let num_parts: i32 = 10;
     let mut completed_parts = Vec::new();
 
     for part_number in 1..=num_parts {
         let part_data = random_bytes(part_size);
 
-        let upload_result = fixture.client
+        let upload_result = fixture
+            .client
             .upload_part()
             .bucket(&fixture.bucket)
             .key(&key)
@@ -283,7 +291,8 @@ async fn test_large_object_multipart() {
         .set_parts(Some(completed_parts))
         .build();
 
-    let complete_result = fixture.client
+    let complete_result = fixture
+        .client
         .complete_multipart_upload()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -299,7 +308,8 @@ async fn test_large_object_multipart() {
     );
 
     // Verify object size
-    let head_result = fixture.client
+    let head_result = fixture
+        .client
         .head_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -307,7 +317,7 @@ async fn test_large_object_multipart() {
         .await
         .unwrap();
 
-    let expected_size = (part_size * num_parts) as i64;
+    let expected_size = (part_size * num_parts as usize) as i64;
     assert_eq!(
         head_result.content_length(),
         Some(expected_size),
@@ -324,7 +334,8 @@ async fn test_multipart_with_metadata() {
     let key = unique_object_key("multipart-object");
 
     // Initiate multipart upload with metadata
-    let create_result = fixture.client
+    let create_result = fixture
+        .client
         .create_multipart_upload()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -338,7 +349,8 @@ async fn test_multipart_with_metadata() {
 
     // Upload one part
     let part_data = random_bytes(5 * 1024 * 1024);
-    let upload_result = fixture.client
+    let upload_result = fixture
+        .client
         .upload_part()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -359,7 +371,8 @@ async fn test_multipart_with_metadata() {
         .parts(completed_part)
         .build();
 
-    fixture.client
+    fixture
+        .client
         .complete_multipart_upload()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -370,7 +383,8 @@ async fn test_multipart_with_metadata() {
         .unwrap();
 
     // Verify metadata
-    let head_result = fixture.client
+    let head_result = fixture
+        .client
         .head_object()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -378,12 +392,12 @@ async fn test_multipart_with_metadata() {
         .await
         .unwrap();
 
+    assert_eq!(head_result.content_type(), Some("application/octet-stream"));
     assert_eq!(
-        head_result.content_type(),
-        Some("application/octet-stream")
-    );
-    assert_eq!(
-        head_result.metadata().get("test-key").map(|s| s.as_str()),
+        head_result
+            .metadata()
+            .and_then(|m| m.get("test-key"))
+            .map(|s| s.as_str()),
         Some("test-value")
     );
 }
@@ -398,7 +412,8 @@ async fn test_multipart_list_uploads() {
     let mut upload_ids = Vec::new();
     for i in 1..=3 {
         let key = format!("multipart-object-{}", i);
-        let create_result = fixture.client
+        let create_result = fixture
+            .client
             .create_multipart_upload()
             .bucket(&fixture.bucket)
             .key(&key)
@@ -410,7 +425,8 @@ async fn test_multipart_list_uploads() {
     }
 
     // List multipart uploads
-    let list_result = fixture.client
+    let list_result = fixture
+        .client
         .list_multipart_uploads()
         .bucket(&fixture.bucket)
         .send()
@@ -418,15 +434,12 @@ async fn test_multipart_list_uploads() {
         .unwrap();
 
     let uploads = list_result.uploads();
-    assert_eq!(
-        uploads.len(),
-        3,
-        "Should list all in-progress uploads"
-    );
+    assert_eq!(uploads.len(), 3, "Should list all in-progress uploads");
 
     // Cleanup - abort all uploads
     for (key, upload_id) in upload_ids {
-        fixture.client
+        fixture
+            .client
             .abort_multipart_upload()
             .bucket(&fixture.bucket)
             .key(&key)
@@ -437,7 +450,8 @@ async fn test_multipart_list_uploads() {
     }
 
     // Verify uploads are gone
-    let list_result = fixture.client
+    let list_result = fixture
+        .client
         .list_multipart_uploads()
         .bucket(&fixture.bucket)
         .send()
@@ -460,7 +474,8 @@ async fn test_multipart_part_size_validation() {
     let key = unique_object_key("multipart-object");
 
     // Initiate multipart upload
-    let create_result = fixture.client
+    let create_result = fixture
+        .client
         .create_multipart_upload()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -473,7 +488,8 @@ async fn test_multipart_part_size_validation() {
     // Upload parts of different sizes
     // Part 1: 5MB
     let part1_data = random_bytes(5 * 1024 * 1024);
-    let upload1 = fixture.client
+    let upload1 = fixture
+        .client
         .upload_part()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -486,7 +502,8 @@ async fn test_multipart_part_size_validation() {
 
     // Part 2: 10MB
     let part2_data = random_bytes(10 * 1024 * 1024);
-    let upload2 = fixture.client
+    let upload2 = fixture
+        .client
         .upload_part()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -499,7 +516,8 @@ async fn test_multipart_part_size_validation() {
 
     // Part 3 (last part): 1MB (allowed to be smaller)
     let part3_data = random_bytes(1024 * 1024);
-    let upload3 = fixture.client
+    let upload3 = fixture
+        .client
         .upload_part()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -532,7 +550,8 @@ async fn test_multipart_part_size_validation() {
         )
         .build();
 
-    let complete_result = fixture.client
+    let complete_result = fixture
+        .client
         .complete_multipart_upload()
         .bucket(&fixture.bucket)
         .key(&key)
@@ -558,7 +577,8 @@ async fn test_multipart_copy() {
 
     // Create a large source object (20MB)
     let source_data = random_bytes(20 * 1024 * 1024);
-    fixture.client
+    fixture
+        .client
         .put_object()
         .bucket(&fixture.bucket)
         .key(&source_key)
@@ -568,7 +588,8 @@ async fn test_multipart_copy() {
         .unwrap();
 
     // Initiate multipart upload for copy
-    let create_result = fixture.client
+    let create_result = fixture
+        .client
         .create_multipart_upload()
         .bucket(&fixture.bucket)
         .key(&dest_key)
@@ -582,7 +603,8 @@ async fn test_multipart_copy() {
     let copy_source = format!("{}/{}", fixture.bucket, source_key);
 
     // Part 1: bytes 0-10485759 (10MB)
-    let upload1 = fixture.client
+    let upload1 = fixture
+        .client
         .upload_part_copy()
         .bucket(&fixture.bucket)
         .key(&dest_key)
@@ -595,7 +617,8 @@ async fn test_multipart_copy() {
         .unwrap();
 
     // Part 2: bytes 10485760-20971519 (10MB)
-    let upload2 = fixture.client
+    let upload2 = fixture
+        .client
         .upload_part_copy()
         .bucket(&fixture.bucket)
         .key(&dest_key)
@@ -623,7 +646,8 @@ async fn test_multipart_copy() {
         )
         .build();
 
-    fixture.client
+    fixture
+        .client
         .complete_multipart_upload()
         .bucket(&fixture.bucket)
         .key(&dest_key)
@@ -634,7 +658,8 @@ async fn test_multipart_copy() {
         .unwrap();
 
     // Verify destination object
-    let head_result = fixture.client
+    let head_result = fixture
+        .client
         .head_object()
         .bucket(&fixture.bucket)
         .key(&dest_key)

@@ -1,6 +1,17 @@
+//! Common protocol types shared across all Anode services.
+//!
+//! This module defines the core data types used throughout the Anode protocol,
+//! including identifiers, object metadata, and Parquet-specific structures.
+//!
+//! # Type Conversions
+//!
+//! All types in this module provide bidirectional conversions to and from their
+//! Protocol Buffer equivalents, enabling seamless serialization for network
+//! communication.
+
 use crate::proto;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fmt;
 
 /// Unique identifier for a node in the cluster
@@ -47,11 +58,38 @@ impl From<ClusterId> for proto::common::ClusterId {
     }
 }
 
-/// Content-addressed chunk identifier (SHA-256 hash)
+/// Content-addressed chunk identifier (SHA-256 hash).
+///
+/// This is a 32-byte SHA-256 hash that uniquely identifies a chunk of data.
+/// Anode uses content-addressed storage, so chunks with identical content
+/// will have the same ChunkId, enabling deduplication.
+///
+/// # Example
+///
+/// ```
+/// use anode_protocol::ChunkId;
+///
+/// let chunk_id = ChunkId([0xab; 32]);
+/// let hex_string = chunk_id.to_hex();
+/// let parsed = ChunkId::from_hex(&hex_string).unwrap();
+/// assert_eq!(chunk_id, parsed);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ChunkId(pub [u8; 32]);
 
 impl ChunkId {
+    /// Creates a ChunkId from a byte slice.
+    ///
+    /// Returns `None` if the slice is not exactly 32 bytes long.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use anode_protocol::ChunkId;
+    ///
+    /// let hash = vec![0u8; 32];
+    /// let chunk_id = ChunkId::from_hash(&hash).unwrap();
+    /// ```
     pub fn from_hash(hash: &[u8]) -> Option<Self> {
         if hash.len() == 32 {
             let mut bytes = [0u8; 32];
@@ -62,14 +100,24 @@ impl ChunkId {
         }
     }
 
+    /// Returns a reference to the underlying 32-byte hash.
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
 
+    /// Converts the chunk ID to a hexadecimal string.
+    ///
+    /// The resulting string is always 64 characters long (2 hex digits per byte).
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)
     }
 
+    /// Parses a chunk ID from a hexadecimal string.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the string is not valid hexadecimal or not exactly
+    /// 64 characters long (32 bytes).
     pub fn from_hex(hex_str: &str) -> Result<Self, hex::FromHexError> {
         let bytes = hex::decode(hex_str)?;
         Self::from_hash(&bytes).ok_or(hex::FromHexError::InvalidStringLength)
@@ -102,14 +150,33 @@ impl From<ChunkId> for proto::common::ChunkId {
     }
 }
 
-/// Key identifying an object in the storage system
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Key identifying an object in the storage system.
+///
+/// An object key consists of a bucket name and an object key (path).
+/// Together, these uniquely identify an object in the Anode cluster.
+///
+/// # Example
+///
+/// ```
+/// use anode_protocol::ObjectKey;
+///
+/// let key = ObjectKey::new("my-bucket", "path/to/object.txt");
+/// assert_eq!(key.bucket, "my-bucket");
+/// assert_eq!(key.key, "path/to/object.txt");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ObjectKey {
+    /// The bucket name containing this object.
     pub bucket: String,
+    /// The object key (path) within the bucket.
     pub key: String,
 }
 
 impl ObjectKey {
+    /// Creates a new ObjectKey from a bucket and key.
+    ///
+    /// Both parameters can be anything that implements `Into<String>`,
+    /// such as `&str` or `String`.
     pub fn new(bucket: impl Into<String>, key: impl Into<String>) -> Self {
         Self {
             bucket: bucket.into(),
@@ -142,26 +209,52 @@ impl From<ObjectKey> for proto::common::ObjectKey {
     }
 }
 
-/// Metadata for an object, including its chunks
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Metadata for an object, including its chunks.
+///
+/// The manifest contains all information needed to reconstruct an object
+/// from its constituent chunks, as well as metadata and timestamps.
+///
+/// # Example
+///
+/// ```
+/// use anode_protocol::{ObjectKey, ObjectManifest, ChunkId};
+///
+/// let key = ObjectKey::new("bucket", "key");
+/// let checksum = [0u8; 32];
+/// let chunks = vec![ChunkId([1u8; 32]), ChunkId([2u8; 32])];
+/// let manifest = ObjectManifest::new(key, 1024, checksum, chunks);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectManifest {
+    /// The object's unique key (bucket + path).
     pub key: ObjectKey,
+    /// Total size of the object in bytes.
     pub total_size: u64,
+    /// SHA-256 checksum of the entire object.
     pub checksum: [u8; 32],
+    /// Ordered list of chunk IDs that make up this object.
     pub chunks: Vec<ChunkId>,
+    /// Creation timestamp (milliseconds since Unix epoch).
     pub created_at: i64,
+    /// Last modification timestamp (milliseconds since Unix epoch).
     pub modified_at: i64,
-    pub metadata: HashMap<String, String>,
+    /// User-defined metadata as key-value pairs.
+    pub metadata: BTreeMap<String, String>,
+    /// Optional Parquet-specific metadata for optimized queries.
     pub parquet_metadata: Option<ParquetMeta>,
+    /// Version ID for object versioning. "null" for non-versioned objects.
+    pub version_id: String,
+    /// Whether this manifest represents a delete marker (not actual data).
+    pub is_delete_marker: bool,
 }
 
 impl ObjectManifest {
-    pub fn new(
-        key: ObjectKey,
-        total_size: u64,
-        checksum: [u8; 32],
-        chunks: Vec<ChunkId>,
-    ) -> Self {
+    /// Creates a new ObjectManifest with the current timestamp.
+    ///
+    /// The `created_at` and `modified_at` fields are automatically set to the
+    /// current time. Metadata and Parquet metadata are initialized as empty/None.
+    /// The version_id is set to "null" by default for non-versioned objects.
+    pub fn new(key: ObjectKey, total_size: u64, checksum: [u8; 32], chunks: Vec<ChunkId>) -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -174,8 +267,10 @@ impl ObjectManifest {
             chunks,
             created_at: now,
             modified_at: now,
-            metadata: HashMap::new(),
+            metadata: BTreeMap::new(),
             parquet_metadata: None,
+            version_id: "null".to_string(),
+            is_delete_marker: false,
         }
     }
 }
@@ -199,6 +294,12 @@ impl From<proto::common::ObjectManifest> for ObjectManifest {
             modified_at: proto.modified_at,
             metadata: proto.metadata,
             parquet_metadata: proto.parquet_meta.map(|pm| pm.into()),
+            version_id: if proto.version_id.is_empty() {
+                "null".to_string()
+            } else {
+                proto.version_id
+            },
+            is_delete_marker: proto.is_delete_marker,
         }
     }
 }
@@ -214,14 +315,23 @@ impl From<ObjectManifest> for proto::common::ObjectManifest {
             modified_at: manifest.modified_at,
             metadata: manifest.metadata,
             parquet_meta: manifest.parquet_metadata.map(|pm| pm.into()),
+            version_id: manifest.version_id,
+            is_delete_marker: manifest.is_delete_marker,
         }
     }
 }
 
-/// Parquet-specific metadata cache
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Parquet-specific metadata cache.
+///
+/// This metadata enables efficient columnar queries on Parquet files by
+/// storing schema information and row group details. This allows the storage
+/// system to optimize range reads for specific columns without downloading
+/// the entire file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParquetMeta {
+    /// Serialized Parquet schema definition.
     pub schema: Vec<u8>,
+    /// Information about each row group in the file.
     pub row_groups: Vec<RowGroupInfo>,
 }
 
@@ -243,11 +353,18 @@ impl From<ParquetMeta> for proto::common::ParquetMetadata {
     }
 }
 
-/// Row group information for Parquet files
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Row group information for Parquet files.
+///
+/// A row group is a horizontal partition of the data in a Parquet file.
+/// This structure stores metadata about the row group that enables efficient
+/// predicate pushdown and selective column reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RowGroupInfo {
+    /// Number of rows in this row group.
     pub num_rows: u64,
+    /// Total byte size of the row group on disk.
     pub total_byte_size: u64,
+    /// Metadata for each column chunk in this row group.
     pub columns: Vec<ColumnChunkInfo>,
 }
 
@@ -271,12 +388,20 @@ impl From<RowGroupInfo> for proto::common::RowGroupInfo {
     }
 }
 
-/// Column chunk information for Parquet files
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Column chunk information for Parquet files.
+///
+/// A column chunk is the data for a particular column within a row group.
+/// This metadata allows the storage system to perform targeted byte-range
+/// reads to fetch only the columns needed for a query.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColumnChunkInfo {
+    /// Dot-separated path to the column (e.g., "user.name").
     pub column_path: String,
+    /// Byte offset of this column chunk within the file.
     pub offset: u64,
+    /// Size of the compressed column data in bytes.
     pub compressed_size: u64,
+    /// Size of the uncompressed column data in bytes.
     pub uncompressed_size: u64,
 }
 
@@ -302,11 +427,17 @@ impl From<ColumnChunkInfo> for proto::common::ColumnChunkInfo {
     }
 }
 
-/// Bucket configuration
+/// Bucket configuration.
+///
+/// A bucket is a top-level container for objects, similar to S3 buckets.
+/// Each bucket has its own replication settings and metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BucketConfig {
+    /// Unique name of the bucket.
     pub name: String,
+    /// Number of replicas to maintain for objects in this bucket.
     pub replication_factor: u32,
+    /// Creation timestamp (milliseconds since Unix epoch).
     pub created_at: i64,
 }
 
@@ -330,11 +461,18 @@ impl From<BucketConfig> for proto::common::BucketConfig {
     }
 }
 
-/// Placement group for data distribution
+/// Placement group for data distribution.
+///
+/// A placement group is a subset of nodes in the cluster that use Raft
+/// consensus to replicate data. Each placement group has a leader that
+/// coordinates writes and replication to follower nodes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlacementGroup {
+    /// Unique identifier for this placement group.
     pub id: u32,
+    /// Node IDs of all members in this group (including leader).
     pub members: Vec<NodeId>,
+    /// The current leader node for this group.
     pub leader: NodeId,
 }
 

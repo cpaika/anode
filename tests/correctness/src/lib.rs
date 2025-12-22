@@ -8,11 +8,11 @@
 //! - Replication
 //! - Recovery
 
-pub mod linearizability;
-pub mod durability;
 pub mod consistency;
-pub mod replication;
+pub mod durability;
+pub mod linearizability;
 pub mod recovery;
+pub mod replication;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -20,8 +20,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 pub fn init_tracing() {
     let _ = tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .try_init();

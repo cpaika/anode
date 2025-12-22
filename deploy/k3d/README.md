@@ -50,6 +50,7 @@ make rebuild        # Build and deploy without recreating cluster
 make test
 
 # Or run individual tests:
+make test-helm-install     # Test Helm chart installation
 make test-deployment       # Test deployment health
 make test-scaling          # Test scaling up/down
 make test-rolling-update   # Test zero-downtime updates
@@ -106,6 +107,7 @@ Configuration file: `cluster.yaml`
 
 | Test | Description |
 |------|-------------|
+| `test_helm_install.sh` | Verifies Helm chart installation and configuration |
 | `test_deployment.sh` | Verifies deployment, pod health, and service endpoints |
 | `test_scaling.sh` | Tests scaling up and down |
 | `test_rolling_update.sh` | Tests zero-downtime rolling updates |

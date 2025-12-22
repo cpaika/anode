@@ -170,7 +170,7 @@ impl ChaosRunner {
                         metrics: serde_json::json!({}),
                         error: Some(e.to_string()),
                     }
-                }
+                },
             };
 
             let chaos_result = ChaosResult::from(result);
@@ -209,7 +209,10 @@ impl ChaosRunner {
 
     /// Get the list of scenario names
     pub fn scenario_names(&self) -> Vec<String> {
-        self.scenarios.iter().map(|s| s.name().to_string()).collect()
+        self.scenarios
+            .iter()
+            .map(|s| s.name().to_string())
+            .collect()
     }
 
     /// Get the number of scenarios

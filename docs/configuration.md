@@ -6,22 +6,33 @@ Complete reference for all Anode configuration options.
 
 Anode uses TOML format for configuration files. The default location is `/etc/anode/config.toml`, but can be overridden with the `--config` flag.
 
+### Configuration Precedence
+
+Configuration values are applied in the following order (highest to lowest priority):
+
+1. **Command-line arguments** - Highest priority
+2. **Environment variables** - Only `RUST_LOG` for logging configuration
+3. **Configuration file** - TOML file specified via `--config` or default location
+4. **Built-in defaults** - Lowest priority
+
+This means command-line arguments will override configuration file values, which in turn override built-in defaults.
+
 ### Example Configuration
 
 ```toml
 [node]
 id = 1
 name = "anode-1"
-s3_addr = "0.0.0.0:8080"
-grpc_addr = "0.0.0.0:9090"
-admin_addr = "0.0.0.0:8081"
+s3_addr = "0.0.0.0:9000"
+grpc_addr = "0.0.0.0:9001"
+admin_addr = "0.0.0.0:9002"
 
 [cluster]
 name = "production-cluster"
 initial_members = [
-    "anode-1:9090",
-    "anode-2:9090",
-    "anode-3:9090"
+    "anode-1:9001",
+    "anode-2:9001",
+    "anode-3:9001"
 ]
 replication_factor = 3
 placement_groups = 128
@@ -95,7 +106,7 @@ Used in logs and monitoring. Can be hostname or any descriptive name.
 
 - **Type**: `string`
 - **Format**: `IP:PORT`
-- **Default**: `"0.0.0.0:8080"`
+- **Default**: `"0.0.0.0:9000"`
 - **Description**: Bind address for S3 HTTP API
 - **Example**: `s3_addr = "0.0.0.0:9000"`
 
@@ -105,9 +116,9 @@ Use `0.0.0.0` to listen on all interfaces, or specific IP to bind to one interfa
 
 - **Type**: `string`
 - **Format**: `IP:PORT`
-- **Default**: `"0.0.0.0:9090"`
+- **Default**: `"0.0.0.0:9001"`
 - **Description**: Bind address for gRPC internal cluster communication
-- **Example**: `grpc_addr = "10.0.1.5:9090"`
+- **Example**: `grpc_addr = "10.0.1.5:9001"`
 
 This port is used for:
 - Raft consensus communication
@@ -120,9 +131,9 @@ Should be accessible from all cluster nodes but not exposed publicly.
 
 - **Type**: `string`
 - **Format**: `IP:PORT`
-- **Default**: `"0.0.0.0:8081"`
+- **Default**: `"0.0.0.0:9002"`
 - **Description**: Bind address for admin and metrics API
-- **Example**: `admin_addr = "0.0.0.0:8081"`
+- **Example**: `admin_addr = "0.0.0.0:9002"`
 
 Exposes:
 - `/health` - Health check endpoint
@@ -438,7 +449,7 @@ Larger cache = more metadata in memory, faster queries.
 - **Description**: Default row group size for Parquet files
 - **Example**: `row_group_size = 1000000`
 
-Used when writing Parquet files (if Anode generates them).
+This setting is primarily for future use when Anode may generate Parquet files. Currently, Anode reads and stores Parquet files but doesn't generate them, so this setting has minimal impact.
 
 #### `enable_predicate_pushdown` (optional)
 
@@ -500,13 +511,37 @@ Logging configuration.
 - **Type**: `string`
 - **Values**: `trace`, `debug`, `info`, `warn`, `error`
 - **Default**: `"info"`
-- **Description**: Log level
+- **Description**: Default log level for all modules
 - **Example**: `level = "debug"`
 
 **Recommendations:**
 - Production: `info` or `warn`
 - Troubleshooting: `debug`
 - Development: `debug` or `trace`
+
+Can be overridden by the `RUST_LOG` environment variable or `module_levels` setting.
+
+#### `module_levels` (optional)
+
+- **Type**: `string`
+- **Default**: `null` (use global `level`)
+- **Description**: Per-module log level configuration
+- **Format**: `"module1=level1,module2=level2,..."`
+- **Example**: `module_levels = "anode_storage=debug,anode_s3=info"`
+
+Allows fine-grained control over logging for specific modules:
+```toml
+# Enable debug logging for storage, keep others at info
+module_levels = "anode_storage=debug"
+
+# Multiple modules with different levels
+module_levels = "anode_raft=trace,anode_storage=debug,anode_s3=info"
+```
+
+**Priority Order:**
+1. `RUST_LOG` environment variable (highest)
+2. `module_levels` configuration
+3. `level` configuration (lowest)
 
 #### `json_format` (optional)
 
@@ -548,18 +583,24 @@ Only used if `rotate = true`.
 
 ## Environment Variable Overrides
 
-Configuration can be overridden with environment variables:
+### Logging Configuration
+
+The `RUST_LOG` environment variable can override logging configuration:
 
 ```bash
-# Format: ANODE_<SECTION>_<KEY>
-export ANODE_NODE_ID=1
-export ANODE_NODE_S3_ADDR=0.0.0.0:8080
-export ANODE_CLUSTER_REPLICATION_FACTOR=3
-export ANODE_STORAGE_DATA_DIR=/mnt/data
-export ANODE_LOGGING_LEVEL=debug
+# Set global log level
+export RUST_LOG=debug
+
+# Per-module log levels
+export RUST_LOG="anode_storage=debug,anode_s3=info"
+
+# More complex filtering
+export RUST_LOG="warn,anode_storage=debug,anode_raft=trace"
 ```
 
-Environment variables take precedence over config file.
+The `RUST_LOG` environment variable takes precedence over both `module_levels` and `level` configuration settings.
+
+**Note**: Currently, Anode does not support general `ANODE_*` environment variables for other configuration options. Use command-line arguments or the configuration file for non-logging settings.
 
 ## Command-Line Arguments
 
@@ -569,9 +610,9 @@ Command-line arguments override both config file and environment variables:
 anode \
     --config /etc/anode/config.toml \
     --node-id 1 \
-    --s3-addr 0.0.0.0:8080 \
-    --grpc-addr 0.0.0.0:9090 \
-    --admin-addr 0.0.0.0:8081 \
+    --s3-addr 0.0.0.0:9000 \
+    --grpc-addr 0.0.0.0:9001 \
+    --admin-addr 0.0.0.0:9002 \
     --data-dir /var/lib/anode/data \
     --log-level info \
     --bootstrap
@@ -613,18 +654,18 @@ If validation fails, Anode will exit with an error message.
 [node]
 id = 1  # Change per node
 name = "anode-prod-1"
-s3_addr = "0.0.0.0:8080"
-grpc_addr = "0.0.0.0:9090"
-admin_addr = "0.0.0.0:8081"
+s3_addr = "0.0.0.0:9000"
+grpc_addr = "0.0.0.0:9001"
+admin_addr = "0.0.0.0:9002"
 
 [cluster]
 name = "production"
 initial_members = [
-    "anode-1.prod.internal:9090",
-    "anode-2.prod.internal:9090",
-    "anode-3.prod.internal:9090",
-    "anode-4.prod.internal:9090",
-    "anode-5.prod.internal:9090"
+    "anode-1.prod.internal:9001",
+    "anode-2.prod.internal:9001",
+    "anode-3.prod.internal:9001",
+    "anode-4.prod.internal:9001",
+    "anode-5.prod.internal:9001"
 ]
 replication_factor = 3
 placement_groups = 256
@@ -677,9 +718,9 @@ max_size = 524288000  # 500MB
 [node]
 id = 1
 name = "dev-node-1"
-s3_addr = "127.0.0.1:8080"
-grpc_addr = "127.0.0.1:9090"
-admin_addr = "127.0.0.1:8081"
+s3_addr = "127.0.0.1:9000"
+grpc_addr = "127.0.0.1:9001"
+admin_addr = "127.0.0.1:9002"
 
 [cluster]
 name = "dev-cluster"

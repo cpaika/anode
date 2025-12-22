@@ -4,7 +4,7 @@ use crate::{
     cluster::TestCluster,
     history::{OperationHistory, OperationResult, OperationValue},
     workload::{Operation, Workload},
-    Result, TestHarnessError,
+    Result,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -118,13 +118,13 @@ impl Simulation {
         // Wait for all clients to finish
         while let Some(result) = tasks.join_next().await {
             match result {
-                Ok(Ok(())) => {}
+                Ok(Ok(())) => {},
                 Ok(Err(e)) => {
                     warn!("Client task failed: {}", e);
-                }
+                },
                 Err(e) => {
                     warn!("Client task panicked: {}", e);
-                }
+                },
             }
         }
 
@@ -169,45 +169,43 @@ impl Simulation {
                 match client.put(&url).body(value).send().await {
                     Ok(response) if response.status().is_success() => {
                         OperationResult::Ok(OperationValue::Unit)
-                    }
+                    },
                     Ok(response) => {
                         OperationResult::Err(format!("PUT failed: {}", response.status()))
-                    }
+                    },
                     Err(e) => OperationResult::Err(format!("PUT error: {}", e)),
                 }
-            }
+            },
             Operation::Get { bucket, key } => {
                 let url = format!("{}/{}/{}", endpoint, bucket, key);
                 match client.get(&url).send().await {
                     Ok(response) if response.status().is_success() => {
                         match response.bytes().await {
-                            Ok(bytes) => {
-                                OperationResult::Ok(OperationValue::Data(bytes.to_vec()))
-                            }
+                            Ok(bytes) => OperationResult::Ok(OperationValue::Data(bytes.to_vec())),
                             Err(e) => OperationResult::Err(format!("GET body error: {}", e)),
                         }
-                    }
+                    },
                     Ok(response) if response.status().as_u16() == 404 => {
                         OperationResult::Ok(OperationValue::NotFound)
-                    }
+                    },
                     Ok(response) => {
                         OperationResult::Err(format!("GET failed: {}", response.status()))
-                    }
+                    },
                     Err(e) => OperationResult::Err(format!("GET error: {}", e)),
                 }
-            }
+            },
             Operation::Delete { bucket, key } => {
                 let url = format!("{}/{}/{}", endpoint, bucket, key);
                 match client.delete(&url).send().await {
                     Ok(response) if response.status().is_success() => {
                         OperationResult::Ok(OperationValue::Unit)
-                    }
+                    },
                     Ok(response) => {
                         OperationResult::Err(format!("DELETE failed: {}", response.status()))
-                    }
+                    },
                     Err(e) => OperationResult::Err(format!("DELETE error: {}", e)),
                 }
-            }
+            },
             Operation::List { bucket, prefix } => {
                 let mut url = format!("{}/{}?list-type=2", endpoint, bucket);
                 if let Some(p) = prefix {
@@ -218,37 +216,37 @@ impl Simulation {
                         // Parse XML response to get keys
                         // For now, just return empty list
                         OperationResult::Ok(OperationValue::Keys(Vec::new()))
-                    }
+                    },
                     Ok(response) => {
                         OperationResult::Err(format!("LIST failed: {}", response.status()))
-                    }
+                    },
                     Err(e) => OperationResult::Err(format!("LIST error: {}", e)),
                 }
-            }
+            },
             Operation::CreateBucket { bucket } => {
                 let url = format!("{}/{}", endpoint, bucket);
                 match client.put(&url).send().await {
                     Ok(response) if response.status().is_success() => {
                         OperationResult::Ok(OperationValue::Unit)
-                    }
+                    },
                     Ok(response) => {
                         OperationResult::Err(format!("CREATE_BUCKET failed: {}", response.status()))
-                    }
+                    },
                     Err(e) => OperationResult::Err(format!("CREATE_BUCKET error: {}", e)),
                 }
-            }
+            },
             Operation::DeleteBucket { bucket } => {
                 let url = format!("{}/{}", endpoint, bucket);
                 match client.delete(&url).send().await {
                     Ok(response) if response.status().is_success() => {
                         OperationResult::Ok(OperationValue::Unit)
-                    }
+                    },
                     Ok(response) => {
                         OperationResult::Err(format!("DELETE_BUCKET failed: {}", response.status()))
-                    }
+                    },
                     Err(e) => OperationResult::Err(format!("DELETE_BUCKET error: {}", e)),
                 }
-            }
+            },
         }
     }
 
@@ -257,17 +255,20 @@ impl Simulation {
         let stats = self.history.stats().await;
         let entries = self.history.get_completed_entries().await;
 
-        let mut latencies: Vec<Duration> = entries
-            .iter()
-            .filter_map(|e| e.duration())
-            .collect();
+        let mut latencies: Vec<Duration> = entries.iter().filter_map(|e| e.duration()).collect();
         latencies.sort();
 
-        let p50_latency = latencies.get(latencies.len() / 2).copied()
+        let p50_latency = latencies
+            .get(latencies.len() / 2)
+            .copied()
             .unwrap_or(Duration::from_secs(0));
-        let p95_latency = latencies.get((latencies.len() * 95) / 100).copied()
+        let p95_latency = latencies
+            .get((latencies.len() * 95) / 100)
+            .copied()
             .unwrap_or(Duration::from_secs(0));
-        let p99_latency = latencies.get((latencies.len() * 99) / 100).copied()
+        let p99_latency = latencies
+            .get((latencies.len() * 99) / 100)
+            .copied()
             .unwrap_or(Duration::from_secs(0));
 
         let throughput = stats.completed as f64 / duration.as_secs_f64();
@@ -342,25 +343,25 @@ impl Simulation {
                         match response.bytes().await {
                             Ok(bytes) if bytes.as_ref() == value.as_slice() => {
                                 // Data matches
-                            }
+                            },
                             Ok(_) => {
                                 warn!("Data mismatch for {}/{}", bucket, key);
                                 all_durable = false;
-                            }
+                            },
                             Err(e) => {
                                 warn!("Failed to read body for {}/{}: {}", bucket, key, e);
                                 all_durable = false;
-                            }
+                            },
                         }
-                    }
+                    },
                     Ok(response) => {
                         warn!("Failed to read {}/{}: {}", bucket, key, response.status());
                         all_durable = false;
-                    }
+                    },
                     Err(e) => {
                         warn!("Error reading {}/{}: {}", bucket, key, e);
                         all_durable = false;
-                    }
+                    },
                 }
             }
         }
@@ -382,7 +383,6 @@ impl Simulation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workload::SequentialWorkload;
 
     #[test]
     fn test_simulation_config() {

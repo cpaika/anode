@@ -10,13 +10,16 @@ pub struct Metrics {
 
     // Request metrics
     pub requests_total: IntCounterVec,
+    pub request_count: IntCounterVec,
     pub request_duration_seconds: HistogramVec,
+    pub request_latency_seconds: HistogramVec,
     pub request_size_bytes: HistogramVec,
     pub response_size_bytes: HistogramVec,
     pub active_requests: IntGauge,
 
     // Object storage metrics
     pub objects_total: IntGaugeVec,
+    pub storage_objects_total: IntGauge,
     pub storage_bytes_total: IntGaugeVec,
     pub operations_total: IntCounterVec,
     pub operation_errors_total: IntCounterVec,
@@ -77,9 +80,18 @@ impl Metrics {
 
         // Request metrics
         let requests_total = IntCounterVec::new(
-            Opts::new("anode_requests_total", "Total number of requests")
-                .namespace("anode"),
+            Opts::new("anode_requests_total", "Total number of requests").namespace("anode"),
             &["method", "endpoint", "status"],
+        )
+        .unwrap();
+
+        let request_count = IntCounterVec::new(
+            Opts::new(
+                "anode_request_count",
+                "Count of requests by method and status",
+            )
+            .namespace("anode"),
+            &["method", "status"],
         )
         .unwrap();
 
@@ -89,8 +101,23 @@ impl Metrics {
                 "Request duration in seconds",
             )
             .namespace("anode")
-            .buckets(vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]),
+            .buckets(vec![
+                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+            ]),
             &["method", "endpoint"],
+        )
+        .unwrap();
+
+        let request_latency_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "anode_request_latency_seconds",
+                "Request latency in seconds",
+            )
+            .namespace("anode")
+            .buckets(vec![
+                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+            ]),
+            &["method"],
         )
         .unwrap();
 
@@ -118,22 +145,25 @@ impl Metrics {
 
         // Object storage metrics
         let objects_total = IntGaugeVec::new(
-            Opts::new("anode_objects_total", "Total number of objects")
-                .namespace("anode"),
+            Opts::new("anode_objects_total", "Total number of objects").namespace("anode"),
             &["bucket"],
         )
         .unwrap();
 
+        let storage_objects_total = IntGauge::new(
+            "anode_storage_objects_total",
+            "Total number of objects in storage",
+        )
+        .unwrap();
+
         let storage_bytes_total = IntGaugeVec::new(
-            Opts::new("anode_storage_bytes_total", "Total storage in bytes")
-                .namespace("anode"),
+            Opts::new("anode_storage_bytes_total", "Total storage in bytes").namespace("anode"),
             &["bucket"],
         )
         .unwrap();
 
         let operations_total = IntCounterVec::new(
-            Opts::new("anode_operations_total", "Total storage operations")
-                .namespace("anode"),
+            Opts::new("anode_operations_total", "Total storage operations").namespace("anode"),
             &["operation"],
         )
         .unwrap();
@@ -154,27 +184,30 @@ impl Metrics {
                 "Storage operation duration in seconds",
             )
             .namespace("anode")
-            .buckets(vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]),
+            .buckets(vec![
+                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
+            ]),
             &["operation"],
         )
         .unwrap();
 
         let chunks_total = IntGaugeVec::new(
-            Opts::new("anode_chunks_total", "Total number of chunks")
-                .namespace("anode"),
+            Opts::new("anode_chunks_total", "Total number of chunks").namespace("anode"),
             &["bucket"],
         )
         .unwrap();
 
         // Raft metrics
-        let raft_term = IntGauge::new("anode_raft_term", "Current Raft term")
-            .unwrap();
+        let raft_term = IntGauge::new("anode_raft_term", "Current Raft term").unwrap();
 
-        let raft_is_leader = IntGauge::new("anode_raft_is_leader", "Whether this node is leader (1) or not (0)")
-            .unwrap();
+        let raft_is_leader = IntGauge::new(
+            "anode_raft_is_leader",
+            "Whether this node is leader (1) or not (0)",
+        )
+        .unwrap();
 
-        let raft_commit_index = IntGauge::new("anode_raft_commit_index", "Raft commit index")
-            .unwrap();
+        let raft_commit_index =
+            IntGauge::new("anode_raft_commit_index", "Raft commit index").unwrap();
 
         let raft_proposals_total = IntCounter::new(
             "anode_raft_proposals_total",
@@ -188,11 +221,8 @@ impl Metrics {
         )
         .unwrap();
 
-        let raft_last_applied = IntGauge::new(
-            "anode_raft_last_applied",
-            "Raft last applied index",
-        )
-        .unwrap();
+        let raft_last_applied =
+            IntGauge::new("anode_raft_last_applied", "Raft last applied index").unwrap();
 
         let raft_leader_changes_total = IntCounter::new(
             "anode_raft_leader_changes_total",
@@ -246,11 +276,8 @@ impl Metrics {
         .unwrap();
 
         // Parquet metrics
-        let parquet_cache_hits_total = IntCounter::new(
-            "anode_parquet_cache_hits_total",
-            "Total Parquet cache hits",
-        )
-        .unwrap();
+        let parquet_cache_hits_total =
+            IntCounter::new("anode_parquet_cache_hits_total", "Total Parquet cache hits").unwrap();
 
         let parquet_cache_misses_total = IntCounter::new(
             "anode_parquet_cache_misses_total",
@@ -265,8 +292,7 @@ impl Metrics {
         .unwrap();
 
         let parquet_queries_total = IntCounterVec::new(
-            Opts::new("anode_parquet_queries_total", "Total Parquet queries")
-                .namespace("anode"),
+            Opts::new("anode_parquet_queries_total", "Total Parquet queries").namespace("anode"),
             &["query_type"],
         )
         .unwrap();
@@ -294,11 +320,8 @@ impl Metrics {
         )
         .unwrap();
 
-        let parquet_files_total = IntGauge::new(
-            "anode_parquet_files_total",
-            "Total number of Parquet files",
-        )
-        .unwrap();
+        let parquet_files_total =
+            IntGauge::new("anode_parquet_files_total", "Total number of Parquet files").unwrap();
 
         let parquet_row_groups_scanned = IntCounterVec::new(
             Opts::new(
@@ -311,31 +334,27 @@ impl Metrics {
         .unwrap();
 
         // System metrics
-        let uptime_seconds = Gauge::new("anode_uptime_seconds", "Server uptime in seconds")
-            .unwrap();
+        let uptime_seconds =
+            Gauge::new("anode_uptime_seconds", "Server uptime in seconds").unwrap();
 
-        let memory_usage_bytes = Gauge::new(
-            "anode_memory_usage_bytes",
-            "Current memory usage in bytes",
-        )
-        .unwrap();
+        let memory_usage_bytes =
+            Gauge::new("anode_memory_usage_bytes", "Current memory usage in bytes").unwrap();
 
-        let cpu_usage_percent = Gauge::new(
-            "anode_cpu_usage_percent",
-            "CPU usage percentage",
-        )
-        .unwrap();
+        let cpu_usage_percent =
+            Gauge::new("anode_cpu_usage_percent", "CPU usage percentage").unwrap();
 
         let disk_usage_bytes = GaugeVec::new(
-            Opts::new("anode_disk_usage_bytes", "Disk usage in bytes")
-                .namespace("anode"),
+            Opts::new("anode_disk_usage_bytes", "Disk usage in bytes").namespace("anode"),
             &["path"],
         )
         .unwrap();
 
         let disk_available_bytes = GaugeVec::new(
-            Opts::new("anode_disk_available_bytes", "Available disk space in bytes")
-                .namespace("anode"),
+            Opts::new(
+                "anode_disk_available_bytes",
+                "Available disk space in bytes",
+            )
+            .namespace("anode"),
             &["path"],
         )
         .unwrap();
@@ -397,66 +416,156 @@ impl Metrics {
                 "Multipart upload duration in seconds",
             )
             .namespace("anode")
-            .buckets(vec![1.0, 5.0, 10.0, 30.0, 60.0, 300.0, 600.0, 1800.0, 3600.0]),
+            .buckets(vec![
+                1.0, 5.0, 10.0, 30.0, 60.0, 300.0, 600.0, 1800.0, 3600.0,
+            ]),
             &["status"],
         )
         .unwrap();
 
         // Register all metrics
         registry.register(Box::new(requests_total.clone())).unwrap();
-        registry.register(Box::new(request_duration_seconds.clone())).unwrap();
-        registry.register(Box::new(request_size_bytes.clone())).unwrap();
-        registry.register(Box::new(response_size_bytes.clone())).unwrap();
-        registry.register(Box::new(active_requests.clone())).unwrap();
+        registry.register(Box::new(request_count.clone())).unwrap();
+        registry
+            .register(Box::new(request_duration_seconds.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(request_latency_seconds.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(request_size_bytes.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(response_size_bytes.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(active_requests.clone()))
+            .unwrap();
         registry.register(Box::new(objects_total.clone())).unwrap();
-        registry.register(Box::new(storage_bytes_total.clone())).unwrap();
-        registry.register(Box::new(operations_total.clone())).unwrap();
-        registry.register(Box::new(operation_errors_total.clone())).unwrap();
-        registry.register(Box::new(operation_duration_seconds.clone())).unwrap();
+        registry
+            .register(Box::new(storage_objects_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(storage_bytes_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(operations_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(operation_errors_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(operation_duration_seconds.clone()))
+            .unwrap();
         registry.register(Box::new(chunks_total.clone())).unwrap();
         registry.register(Box::new(raft_term.clone())).unwrap();
         registry.register(Box::new(raft_is_leader.clone())).unwrap();
-        registry.register(Box::new(raft_commit_index.clone())).unwrap();
-        registry.register(Box::new(raft_last_applied.clone())).unwrap();
-        registry.register(Box::new(raft_proposals_total.clone())).unwrap();
-        registry.register(Box::new(raft_proposal_failures_total.clone())).unwrap();
-        registry.register(Box::new(raft_leader_changes_total.clone())).unwrap();
-        registry.register(Box::new(raft_snapshot_creating.clone())).unwrap();
-        registry.register(Box::new(raft_snapshot_last_index.clone())).unwrap();
-        registry.register(Box::new(cluster_nodes_total.clone())).unwrap();
-        registry.register(Box::new(cluster_healthy_nodes.clone())).unwrap();
-        registry.register(Box::new(cluster_replication_lag_seconds.clone())).unwrap();
-        registry.register(Box::new(cluster_peer_rtt_seconds.clone())).unwrap();
-        registry.register(Box::new(parquet_cache_hits_total.clone())).unwrap();
-        registry.register(Box::new(parquet_cache_misses_total.clone())).unwrap();
-        registry.register(Box::new(parquet_cache_size_bytes.clone())).unwrap();
-        registry.register(Box::new(parquet_cache_items.clone())).unwrap();
-        registry.register(Box::new(parquet_cache_evictions_total.clone())).unwrap();
-        registry.register(Box::new(parquet_queries_total.clone())).unwrap();
-        registry.register(Box::new(parquet_query_duration_seconds.clone())).unwrap();
-        registry.register(Box::new(parquet_files_total.clone())).unwrap();
-        registry.register(Box::new(parquet_row_groups_scanned.clone())).unwrap();
+        registry
+            .register(Box::new(raft_commit_index.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(raft_last_applied.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(raft_proposals_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(raft_proposal_failures_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(raft_leader_changes_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(raft_snapshot_creating.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(raft_snapshot_last_index.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(cluster_nodes_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(cluster_healthy_nodes.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(cluster_replication_lag_seconds.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(cluster_peer_rtt_seconds.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(parquet_cache_hits_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(parquet_cache_misses_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(parquet_cache_size_bytes.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(parquet_cache_items.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(parquet_cache_evictions_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(parquet_queries_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(parquet_query_duration_seconds.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(parquet_files_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(parquet_row_groups_scanned.clone()))
+            .unwrap();
         registry.register(Box::new(uptime_seconds.clone())).unwrap();
-        registry.register(Box::new(memory_usage_bytes.clone())).unwrap();
-        registry.register(Box::new(cpu_usage_percent.clone())).unwrap();
-        registry.register(Box::new(disk_usage_bytes.clone())).unwrap();
-        registry.register(Box::new(disk_available_bytes.clone())).unwrap();
-        registry.register(Box::new(open_file_descriptors.clone())).unwrap();
-        registry.register(Box::new(network_bytes_sent_total.clone())).unwrap();
-        registry.register(Box::new(network_bytes_received_total.clone())).unwrap();
-        registry.register(Box::new(active_connections.clone())).unwrap();
-        registry.register(Box::new(multipart_uploads_active.clone())).unwrap();
-        registry.register(Box::new(multipart_parts_total.clone())).unwrap();
-        registry.register(Box::new(multipart_upload_duration_seconds.clone())).unwrap();
+        registry
+            .register(Box::new(memory_usage_bytes.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(cpu_usage_percent.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(disk_usage_bytes.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(disk_available_bytes.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(open_file_descriptors.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(network_bytes_sent_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(network_bytes_received_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(active_connections.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(multipart_uploads_active.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(multipart_parts_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(multipart_upload_duration_seconds.clone()))
+            .unwrap();
 
         Self {
             registry,
             requests_total,
+            request_count,
             request_duration_seconds,
+            request_latency_seconds,
             request_size_bytes,
             response_size_bytes,
             active_requests,
             objects_total,
+            storage_objects_total,
             storage_bytes_total,
             operations_total,
             operation_errors_total,
@@ -529,6 +638,11 @@ mod tests {
     #[test]
     fn test_metrics_creation() {
         let metrics = Metrics::new();
+        // Increment a counter to ensure it shows up in export
+        metrics
+            .requests_total
+            .with_label_values(&["GET", "/test", "200"])
+            .inc();
         assert!(metrics.export().contains("anode_requests_total"));
     }
 

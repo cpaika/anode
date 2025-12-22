@@ -265,10 +265,16 @@ pub async fn test_chunk_reference_counting() -> Result<()> {
 
     // Both objects should be readable
     let response1 = client.get(&url1).send().await?;
-    assert!(response1.status().is_success(), "Object 1 should be readable");
+    assert!(
+        response1.status().is_success(),
+        "Object 1 should be readable"
+    );
 
     let response2 = client.get(&url2).send().await?;
-    assert!(response2.status().is_success(), "Object 2 should be readable");
+    assert!(
+        response2.status().is_success(),
+        "Object 2 should be readable"
+    );
 
     // Delete first object
     client.delete(&url1).send().await?;
@@ -321,7 +327,10 @@ pub async fn test_erasure_coding_replication() -> Result<()> {
 
     // Verify object is readable
     let response = client.get(&url).send().await?;
-    assert!(response.status().is_success(), "Large object should be readable");
+    assert!(
+        response.status().is_success(),
+        "Large object should be readable"
+    );
 
     // Kill 2 nodes (should still be recoverable with EC)
     cluster.kill_node(1).await?;

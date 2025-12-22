@@ -14,7 +14,7 @@ use anode_test_harness::{
     workload::Operation,
     Result,
 };
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinSet;
@@ -56,10 +56,8 @@ pub async fn test_single_key_concurrent_writes() -> Result<()> {
             let result = match client.put(&url).body(value).send().await {
                 Ok(response) if response.status().is_success() => {
                     OperationResult::Ok(OperationValue::Unit)
-                }
-                Ok(response) => {
-                    OperationResult::Err(format!("PUT failed: {}", response.status()))
-                }
+                },
+                Ok(response) => OperationResult::Err(format!("PUT failed: {}", response.status())),
                 Err(e) => OperationResult::Err(format!("PUT error: {}", e)),
             };
 
@@ -199,10 +197,10 @@ pub async fn test_multi_key_linearizability() -> Result<()> {
                 let result = match client.put(&url).body(value).send().await {
                     Ok(response) if response.status().is_success() => {
                         OperationResult::Ok(OperationValue::Unit)
-                    }
+                    },
                     Ok(response) => {
                         OperationResult::Err(format!("PUT failed: {}", response.status()))
-                    }
+                    },
                     Err(e) => OperationResult::Err(format!("PUT error: {}", e)),
                 };
 
@@ -312,7 +310,7 @@ impl LinearizabilityChecker {
         info!("Checking linearizability for {} operations", entries.len());
 
         // Group operations by key
-        let mut by_key: HashMap<String, Vec<HistoryEntry>> = HashMap::new();
+        let mut by_key: BTreeMap<String, Vec<HistoryEntry>> = BTreeMap::new();
 
         for entry in entries {
             let key = match &entry.operation {
@@ -345,47 +343,41 @@ impl LinearizabilityChecker {
         let mut writes = Vec::new();
 
         for op in ops.iter() {
-            match &op.operation {
-                Operation::Put { value, .. } => {
-                    if let Some(complete_time) = op.complete_time {
-                        writes.push((complete_time, value.clone()));
-                    }
+            if let Operation::Put { value, .. } = &op.operation {
+                if let Some(complete_time) = op.complete_time {
+                    writes.push((complete_time, value.clone()));
                 }
-                _ => {}
             }
         }
 
         // Check each read operation
         for op in ops.iter() {
-            match &op.operation {
-                Operation::Get { .. } => {
-                    if let Some(result) = &op.result {
-                        match result {
-                            OperationResult::Ok(OperationValue::Data(data)) => {
-                                // Read must return a value from a write that
-                                // completed before this read was invoked
-                                let read_invoke = op.invoke_time;
-                                let valid = writes.iter().any(|(write_time, write_value)| {
-                                    *write_time <= read_invoke && write_value == data
-                                });
+            if let Operation::Get { .. } = &op.operation {
+                if let Some(result) = &op.result {
+                    match result {
+                        OperationResult::Ok(OperationValue::Data(data)) => {
+                            // Read must return a value from a write that
+                            // completed before this read was invoked
+                            let read_invoke = op.invoke_time;
+                            let valid = writes.iter().any(|(write_time, write_value)| {
+                                *write_time <= read_invoke && write_value == data
+                            });
 
-                                if !valid {
-                                    warn!(
-                                        "Read returned value not from any completed write for key {}",
-                                        key
-                                    );
-                                    return Ok(false);
-                                }
+                            if !valid {
+                                warn!(
+                                    "Read returned value not from any completed write for key {}",
+                                    key
+                                );
+                                return Ok(false);
                             }
-                            OperationResult::Ok(OperationValue::NotFound) => {
-                                // NotFound is acceptable if no writes completed
-                                // before the read invocation (simplified check)
-                            }
-                            _ => {}
-                        }
+                        },
+                        OperationResult::Ok(OperationValue::NotFound) => {
+                            // NotFound is acceptable if no writes completed
+                            // before the read invocation (simplified check)
+                        },
+                        _ => {},
                     }
                 }
-                _ => {}
             }
         }
 

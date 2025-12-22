@@ -99,11 +99,11 @@ impl Discovery {
                 Ok(nodes) => {
                     debug!("Discovered {} nodes", nodes.len());
                     all_nodes.extend(nodes);
-                }
+                },
                 Err(e) => {
                     warn!("Discovery method failed: {}", e);
                     errors.push(e);
-                }
+                },
             }
         }
 
@@ -149,11 +149,9 @@ impl StaticDiscovery {
         let nodes = addresses
             .into_iter()
             .enumerate()
-            .map(|(idx, addr)| NodeInfo::new(
-                (idx + 1) as NodeId,
-                format!("node-{}", idx + 1),
-                addr,
-            ))
+            .map(|(idx, addr)| {
+                NodeInfo::new((idx + 1) as NodeId, format!("node-{}", idx + 1), addr)
+            })
             .collect();
 
         Self { nodes }
@@ -194,20 +192,22 @@ impl DiscoveryMethod for DnsDiscovery {
             Ok(addrs) => {
                 let nodes: Vec<NodeInfo> = addrs
                     .enumerate()
-                    .map(|(idx, addr)| NodeInfo::new(
-                        (idx + 1) as NodeId,
-                        format!("dns-node-{}", idx + 1),
-                        addr.to_string(),
-                    ))
+                    .map(|(idx, addr)| {
+                        NodeInfo::new(
+                            (idx + 1) as NodeId,
+                            format!("dns-node-{}", idx + 1),
+                            addr.to_string(),
+                        )
+                    })
                     .collect();
 
                 info!("DNS discovery found {} nodes", nodes.len());
                 Ok(nodes)
-            }
+            },
             Err(e) => {
                 warn!("DNS lookup failed: {}", e);
                 Err(DiscoveryError::DnsError(e.to_string()))
-            }
+            },
         }
     }
 }
@@ -335,13 +335,17 @@ mod tests {
     async fn test_discovery_multiple_methods() {
         let mut discovery = Discovery::new();
 
-        let nodes1 = vec![
-            NodeInfo::new(1, "node1".to_string(), "127.0.0.1:6001".to_string()),
-        ];
+        let nodes1 = vec![NodeInfo::new(
+            1,
+            "node1".to_string(),
+            "127.0.0.1:6001".to_string(),
+        )];
 
-        let nodes2 = vec![
-            NodeInfo::new(2, "node2".to_string(), "127.0.0.1:6002".to_string()),
-        ];
+        let nodes2 = vec![NodeInfo::new(
+            2,
+            "node2".to_string(),
+            "127.0.0.1:6002".to_string(),
+        )];
 
         discovery.add_method(Arc::new(StaticDiscovery::new(nodes1)));
         discovery.add_method(Arc::new(StaticDiscovery::new(nodes2)));
@@ -354,13 +358,17 @@ mod tests {
     async fn test_discovery_deduplication() {
         let mut discovery = Discovery::new();
 
-        let nodes1 = vec![
-            NodeInfo::new(1, "node1".to_string(), "127.0.0.1:6001".to_string()),
-        ];
+        let nodes1 = vec![NodeInfo::new(
+            1,
+            "node1".to_string(),
+            "127.0.0.1:6001".to_string(),
+        )];
 
-        let nodes2 = vec![
-            NodeInfo::new(1, "node1-dup".to_string(), "127.0.0.1:6001".to_string()),
-        ];
+        let nodes2 = vec![NodeInfo::new(
+            1,
+            "node1-dup".to_string(),
+            "127.0.0.1:6001".to_string(),
+        )];
 
         discovery.add_method(Arc::new(StaticDiscovery::new(nodes1)));
         discovery.add_method(Arc::new(StaticDiscovery::new(nodes2)));
@@ -387,8 +395,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_discovery() {
-        use tempfile::NamedTempFile;
         use std::io::Write;
+        use tempfile::NamedTempFile;
 
         let nodes = vec![
             NodeInfo::new(1, "node1".to_string(), "127.0.0.1:6001".to_string()),

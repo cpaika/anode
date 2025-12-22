@@ -42,6 +42,84 @@ fn bench_put_throughput(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark PUT 1KB object throughput (ops/sec)
+///
+/// Dedicated benchmark measuring PUT operations per second for 1KB objects.
+/// This is a common use case for small file uploads and metadata storage.
+fn bench_put_1kb_ops_per_sec(c: &mut Criterion) {
+    let mut group = c.benchmark_group("put_1kb_ops_per_sec");
+    let data = generate_random_data(1024);
+
+    // Configure to measure operations per second
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("1kb_put_ops", |b| {
+        let mut counter = 0;
+        b.iter(|| {
+            // Mock PUT operation for 1KB object
+            // In real implementation: client.put_object("bucket", format!("key-{}", counter), &data)
+            let key = format!("object-{}", counter);
+            let _hash = calculate_hash(&data);
+            let _metadata = ObjectMetadata::new(&key, data.len());
+            counter += 1;
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark PUT 1MB object throughput (MB/sec)
+///
+/// Dedicated benchmark measuring megabytes per second for 1MB object PUTs.
+/// This is a common use case for large file uploads and assessing throughput capacity.
+fn bench_put_1mb_throughput(c: &mut Criterion) {
+    let mut group = c.benchmark_group("put_1mb_throughput");
+    let data = generate_random_data(1024 * 1024); // 1MB
+
+    // Configure to measure bytes per second (MB/sec)
+    group.throughput(Throughput::Bytes(1024 * 1024));
+
+    group.bench_function("1mb_put_mbps", |b| {
+        let mut counter = 0;
+        b.iter(|| {
+            // Mock PUT operation for 1MB object
+            // In real implementation: client.put_object("bucket", format!("key-{}", counter), &data)
+            let key = format!("object-{}", counter);
+            let _hash = calculate_hash(&data);
+            let _metadata = ObjectMetadata::new(&key, data.len());
+            counter += 1;
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark PUT 100MB object throughput (MB/sec)
+///
+/// Dedicated benchmark measuring megabytes per second for 100MB object PUTs.
+/// This is a common use case for very large file uploads and assessing maximum throughput capacity.
+fn bench_put_100mb_throughput(c: &mut Criterion) {
+    let mut group = c.benchmark_group("put_100mb_throughput");
+    let data = generate_random_data(100 * 1024 * 1024); // 100MB
+
+    // Configure to measure bytes per second (MB/sec)
+    group.throughput(Throughput::Bytes(100 * 1024 * 1024));
+
+    group.bench_function("100mb_put_mbps", |b| {
+        let mut counter = 0;
+        b.iter(|| {
+            // Mock PUT operation for 100MB object
+            // In real implementation: client.put_object("bucket", format!("key-{}", counter), &data)
+            let key = format!("object-{}", counter);
+            let _hash = calculate_hash(&data);
+            let _metadata = ObjectMetadata::new(&key, data.len());
+            counter += 1;
+        });
+    });
+
+    group.finish();
+}
+
 /// Benchmark GET operation throughput
 ///
 /// Measures how many GET requests the system can handle per second.
@@ -61,6 +139,95 @@ fn bench_get_throughput(c: &mut Criterion) {
         let mut idx = 0;
         b.iter(|| {
             // Mock GET operation
+            idx = (idx + 1) % objects.len();
+            let _data = &objects[idx].1;
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark GET 1KB object throughput (ops/sec)
+///
+/// Dedicated benchmark measuring GET operations per second for 1KB objects.
+/// This is a common use case for small file reads and metadata retrieval.
+fn bench_get_1kb_ops_per_sec(c: &mut Criterion) {
+    let mut group = c.benchmark_group("get_1kb_ops_per_sec");
+
+    // Pre-populate mock 1KB objects
+    let objects: Vec<_> = (0..100)
+        .map(|i| (format!("object-{}", i), generate_random_data(1024)))
+        .collect();
+
+    // Configure to measure operations per second
+    group.throughput(Throughput::Elements(1));
+
+    group.bench_function("1kb_get_ops", |b| {
+        let mut idx = 0;
+        b.iter(|| {
+            // Mock GET operation for 1KB object
+            // In real implementation: client.get_object("bucket", format!("key-{}", idx))
+            idx = (idx + 1) % objects.len();
+            let _data = &objects[idx].1;
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark GET 1MB object throughput (MB/sec)
+///
+/// Dedicated benchmark measuring megabytes per second for 1MB object GETs.
+/// This is a common use case for large file downloads and assessing throughput capacity.
+fn bench_get_1mb_throughput(c: &mut Criterion) {
+    let mut group = c.benchmark_group("get_1mb_throughput");
+
+    // Pre-populate mock 1MB objects
+    let objects: Vec<_> = (0..100)
+        .map(|i| (format!("object-{}", i), generate_random_data(1024 * 1024)))
+        .collect();
+
+    // Configure to measure bytes per second (MB/sec)
+    group.throughput(Throughput::Bytes(1024 * 1024));
+
+    group.bench_function("1mb_get_mbps", |b| {
+        let mut idx = 0;
+        b.iter(|| {
+            // Mock GET operation for 1MB object
+            // In real implementation: client.get_object("bucket", format!("key-{}", idx))
+            idx = (idx + 1) % objects.len();
+            let _data = &objects[idx].1;
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark GET 100MB object throughput (MB/sec)
+///
+/// Dedicated benchmark measuring megabytes per second for 100MB object GETs.
+/// This is a common use case for very large file downloads and assessing maximum throughput capacity.
+fn bench_get_100mb_throughput(c: &mut Criterion) {
+    let mut group = c.benchmark_group("get_100mb_throughput");
+
+    // Pre-populate mock 100MB objects
+    let objects: Vec<_> = (0..10)
+        .map(|i| {
+            (
+                format!("object-{}", i),
+                generate_random_data(100 * 1024 * 1024),
+            )
+        })
+        .collect();
+
+    // Configure to measure bytes per second (MB/sec)
+    group.throughput(Throughput::Bytes(100 * 1024 * 1024));
+
+    group.bench_function("100mb_get_mbps", |b| {
+        let mut idx = 0;
+        b.iter(|| {
+            // Mock GET operation for 100MB object
+            // In real implementation: client.get_object("bucket", format!("key-{}", idx))
             idx = (idx + 1) % objects.len();
             let _data = &objects[idx].1;
         });
@@ -106,14 +273,14 @@ fn bench_mixed_workload(c: &mut Criterion) {
                             read_idx = (read_idx + 1) % storage.len();
                             let _data = &storage[read_idx];
                         }
-                    }
+                    },
                     Operation::Write => {
                         let key = format!("object-{}", write_idx);
                         let data = generate_random_data(config.object_size);
                         storage.push((key, data));
                         write_idx += 1;
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
         });
@@ -242,7 +409,13 @@ fn calculate_hash(data: &[u8]) -> [u8; 32] {
 criterion_group!(
     throughput_benches,
     bench_put_throughput,
+    bench_put_1kb_ops_per_sec,
+    bench_put_1mb_throughput,
+    bench_put_100mb_throughput,
     bench_get_throughput,
+    bench_get_1kb_ops_per_sec,
+    bench_get_1mb_throughput,
+    bench_get_100mb_throughput,
     bench_mixed_workload,
     bench_concurrent_clients,
     bench_parallel_uploads,

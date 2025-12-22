@@ -1,12 +1,12 @@
-use std::sync::Arc;
-use std::time::Duration;
 use anode_raft::AnodeRaft;
 use anode_storage::StorageEngine;
-use openraft::{RaftMetrics, State};
+use openraft::{BasicNode, RaftMetrics};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
 use tokio::time::{sleep, timeout};
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 use crate::cluster::{ClusterStatus, NodeId, NodeInfo};
 
@@ -60,14 +60,8 @@ pub enum BootstrapError {
     NetworkError(String),
 }
 
-impl From<openraft::error::InitializeError<NodeId>> for BootstrapError {
-    fn from(err: openraft::error::InitializeError<NodeId>) -> Self {
-        BootstrapError::RaftError(err.to_string())
-    }
-}
-
-impl From<openraft::error::RaftError<NodeId>> for BootstrapError {
-    fn from(err: openraft::error::RaftError<NodeId>) -> Self {
+impl<E: std::error::Error> From<openraft::error::RaftError<NodeId, E>> for BootstrapError {
+    fn from(err: openraft::error::RaftError<NodeId, E>) -> Self {
         BootstrapError::RaftError(err.to_string())
     }
 }
@@ -80,11 +74,7 @@ pub struct ClusterBootstrap {
 }
 
 impl ClusterBootstrap {
-    pub fn new(
-        config: BootstrapConfig,
-        raft: Arc<AnodeRaft>,
-        storage: Arc<StorageEngine>,
-    ) -> Self {
+    pub fn new(config: BootstrapConfig, raft: Arc<AnodeRaft>, storage: Arc<StorageEngine>) -> Self {
         Self {
             config,
             raft,
@@ -94,7 +84,10 @@ impl ClusterBootstrap {
 
     /// Bootstrap a new cluster (this node becomes initial leader)
     pub async fn bootstrap_new_cluster(&self) -> Result<(), BootstrapError> {
-        info!("Bootstrapping new cluster with node {}", self.config.node_id);
+        info!(
+            "Bootstrapping new cluster with node {}",
+            self.config.node_id
+        );
 
         // Check if already initialized
         if self.is_initialized().await {
@@ -106,7 +99,7 @@ impl ClusterBootstrap {
         let mut members = std::collections::BTreeMap::new();
         members.insert(
             self.config.node_id,
-            anode_raft::network::Node {
+            BasicNode {
                 addr: self.config.advertise_addr.clone(),
             },
         );
@@ -114,12 +107,7 @@ impl ClusterBootstrap {
         // Add other initial members if specified
         for (idx, addr) in self.config.initial_members.iter().enumerate() {
             let node_id = (self.config.node_id + idx as u64 + 1) as NodeId;
-            members.insert(
-                node_id,
-                anode_raft::network::Node {
-                    addr: addr.clone(),
-                },
-            );
+            members.insert(node_id, BasicNode { addr: addr.clone() });
         }
 
         info!("Initializing cluster with {} members", members.len());
@@ -170,11 +158,12 @@ impl ClusterBootstrap {
         self.wait_ready(self.config.timeout).await?;
 
         Ok(ClusterStatus {
-            leader_id: self.get_leader().await,
-            members: vec![node_info],
-            placement_groups: Vec::new(),
+            cluster_name: "anode-cluster".to_string(),
             total_nodes: 1,
             healthy_nodes: 1,
+            leader_id: self.get_leader().await,
+            current_term: 0,
+            nodes: vec![node_info],
         })
     }
 
@@ -209,7 +198,10 @@ impl ClusterBootstrap {
 
     /// Wait for cluster to be ready
     pub async fn wait_ready(&self, timeout_duration: Duration) -> Result<(), BootstrapError> {
-        info!("Waiting for cluster to be ready (timeout: {:?})", timeout_duration);
+        info!(
+            "Waiting for cluster to be ready (timeout: {:?})",
+            timeout_duration
+        );
 
         let result = timeout(timeout_duration, async {
             loop {
@@ -225,19 +217,25 @@ impl ClusterBootstrap {
             Ok(Ok(())) => {
                 info!("Cluster is ready");
                 Ok(())
-            }
+            },
             Ok(Err(e)) => Err(e),
             Err(_) => {
                 error!("Timeout waiting for cluster to be ready");
                 Err(BootstrapError::Timeout)
-            }
+            },
         }
     }
 
     /// Check if the raft instance is initialized
     async fn is_initialized(&self) -> bool {
         let metrics = self.raft.metrics().borrow().clone();
-        metrics.current_term > 0 || !metrics.membership_config.membership().is_empty()
+        metrics.current_term > 0
+            || !metrics
+                .membership_config
+                .membership()
+                .voter_ids()
+                .next()
+                .is_none()
     }
 
     /// Check if cluster is ready (has a leader)
@@ -266,7 +264,7 @@ impl ClusterBootstrap {
             Err(_) => {
                 error!("Timeout waiting for leader election");
                 Err(BootstrapError::Timeout)
-            }
+            },
         }
     }
 
@@ -280,7 +278,7 @@ impl ClusterBootstrap {
         let metrics = self.raft.metrics().borrow().clone();
         let leader_id = metrics.current_leader;
 
-        let members: Vec<NodeInfo> = metrics
+        let nodes: Vec<NodeInfo> = metrics
             .membership_config
             .membership()
             .nodes()
@@ -293,14 +291,15 @@ impl ClusterBootstrap {
             })
             .collect();
 
-        let total_nodes = members.len();
+        let total_nodes = nodes.len();
 
         Ok(ClusterStatus {
-            leader_id,
-            members,
-            placement_groups: Vec::new(),
+            cluster_name: "anode-cluster".to_string(),
             total_nodes,
             healthy_nodes: total_nodes, // TODO: Implement health checking
+            leader_id,
+            current_term: metrics.current_term,
+            nodes,
         })
     }
 }
@@ -308,33 +307,23 @@ impl ClusterBootstrap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anode_raft::{RaftStorage, StateMachine, Network};
-    use anode_storage::engine::StorageConfig;
+    use anode_raft::{create_raft_node, RaftConfig};
+    use anode_storage::StorageConfig;
     use tempfile::TempDir;
 
     async fn create_test_bootstrap() -> (ClusterBootstrap, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        let storage_config = StorageConfig::new(temp_dir.path().to_path_buf());
+        let storage_config = StorageConfig {
+            data_dir: temp_dir.path().join("blobs"),
+            metadata_dir: temp_dir.path().join("metadata"),
+            chunk_size: anode_storage::chunks::CHUNK_SIZE,
+            sync_writes: false,
+        };
         let storage = Arc::new(StorageEngine::open(storage_config).await.unwrap());
 
-        let raft_storage = Arc::new(
-            RaftStorage::open(temp_dir.path().join("raft.db"))
-                .await
-                .unwrap()
-        );
-        let state_machine = Arc::new(StateMachine::new());
-        let network = Arc::new(Network::new());
-
-        let raft_config = openraft::Config::default();
-        let raft = AnodeRaft::new(
-            1,
-            raft_config,
-            network,
-            raft_storage,
-            state_machine,
-        )
-        .await
-        .unwrap();
+        let raft = create_raft_node(1, "test-cluster", temp_dir.path().join("raft"), storage.clone())
+            .await
+            .unwrap();
 
         let config = BootstrapConfig {
             node_id: 1,

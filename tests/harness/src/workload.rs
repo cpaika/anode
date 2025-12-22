@@ -1,6 +1,6 @@
 //! Workload generation for simulations
 
-use crate::{BucketName, ObjectKey, Result};
+use crate::{BucketName, ObjectKey};
 use async_trait::async_trait;
 use rand::distributions::Alphanumeric;
 use rand::prelude::*;
@@ -18,28 +18,18 @@ pub enum Operation {
         value: Vec<u8>,
     },
     /// Get an object
-    Get {
-        bucket: BucketName,
-        key: ObjectKey,
-    },
+    Get { bucket: BucketName, key: ObjectKey },
     /// Delete an object
-    Delete {
-        bucket: BucketName,
-        key: ObjectKey,
-    },
+    Delete { bucket: BucketName, key: ObjectKey },
     /// List objects
     List {
         bucket: BucketName,
         prefix: Option<String>,
     },
     /// Create bucket
-    CreateBucket {
-        bucket: BucketName,
-    },
+    CreateBucket { bucket: BucketName },
     /// Delete bucket
-    DeleteBucket {
-        bucket: BucketName,
-    },
+    DeleteBucket { bucket: BucketName },
 }
 
 /// Trait for workload generators
@@ -75,7 +65,7 @@ pub struct RandomWorkload {
     value_size_range: (usize, usize),
     read_ratio: f64,
     write_ratio: f64,
-    delete_ratio: f64,
+    _delete_ratio: f64,
     stats: WorkloadStats,
 }
 
@@ -97,7 +87,7 @@ impl RandomWorkload {
             value_size_range,
             read_ratio,
             write_ratio,
-            delete_ratio,
+            _delete_ratio: delete_ratio,
             stats: WorkloadStats::default(),
         }
     }
@@ -113,7 +103,10 @@ impl RandomWorkload {
     }
 
     fn random_value(&self) -> Vec<u8> {
-        let size = self.rng.lock().unwrap()
+        let size = self
+            .rng
+            .lock()
+            .unwrap()
             .gen_range(self.value_size_range.0..=self.value_size_range.1);
         let mut rng = self.rng.lock().unwrap();
         (0..size).map(|_| rng.gen()).collect()
@@ -173,7 +166,9 @@ impl SequentialWorkload {
     }
 
     fn next_key(&self) -> ObjectKey {
-        let key_id = self.current_key.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let key_id = self
+            .current_key
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         format!("key-{:08}", key_id)
     }
 
@@ -194,7 +189,8 @@ impl Workload for SequentialWorkload {
     }
 
     fn reset(&mut self) {
-        self.current_key.store(0, std::sync::atomic::Ordering::SeqCst);
+        self.current_key
+            .store(0, std::sync::atomic::Ordering::SeqCst);
         self.stats = WorkloadStats::default();
     }
 
@@ -253,7 +249,10 @@ impl HotspotWorkload {
     }
 
     fn random_value(&self) -> Vec<u8> {
-        let size = self.rng.lock().unwrap()
+        let size = self
+            .rng
+            .lock()
+            .unwrap()
             .gen_range(self.value_size_range.0..=self.value_size_range.1);
         let mut rng = self.rng.lock().unwrap();
         (0..size).map(|_| rng.gen()).collect()
@@ -382,16 +381,16 @@ mod tests {
             Operation::Get { bucket, key } => {
                 assert!(bucket.starts_with("bucket-"));
                 assert!(key.starts_with("key-"));
-            }
+            },
             Operation::Put { bucket, key, value } => {
                 assert!(bucket.starts_with("bucket-"));
                 assert!(key.starts_with("key-"));
                 assert!(value.len() >= 1024 && value.len() <= 4096);
-            }
+            },
             Operation::Delete { bucket, key } => {
                 assert!(bucket.starts_with("bucket-"));
                 assert!(key.starts_with("key-"));
-            }
+            },
             _ => panic!("Unexpected operation type"),
         }
     }
@@ -412,20 +411,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_hotspot_workload() {
-        let workload = HotspotWorkload::new(
-            "test-bucket".to_string(),
-            10,
-            1000,
-            (1024, 4096),
-            0.8,
-        );
+        let workload = HotspotWorkload::new("test-bucket".to_string(), 10, 1000, (1024, 4096), 0.8);
 
         let op = workload.generate_operation().await;
 
         match op {
             Operation::Get { key, .. } | Operation::Put { key, .. } => {
                 assert!(key.starts_with("hot-key-") || key.starts_with("cold-key-"));
-            }
+            },
             _ => panic!("Unexpected operation type"),
         }
     }

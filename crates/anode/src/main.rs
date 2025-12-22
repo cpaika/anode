@@ -5,12 +5,13 @@ use tokio::signal;
 use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-mod config;
-mod server;
-mod cluster;
-mod health;
-mod metrics;
 mod admin;
+mod cluster;
+mod config;
+mod health;
+mod keystore;
+mod metrics;
+mod server;
 
 use config::Config;
 use server::Server;
@@ -61,21 +62,14 @@ async fn main() -> Result<()> {
     // Parse command line arguments
     let cli = Cli::parse();
 
-    // Initialize tracing/logging
-    init_logging(&cli.log_level)?;
-
-    info!("Starting Anode server");
-    info!("Config file: {:?}", cli.config);
-
-    // Load configuration from file
+    // Load configuration from file first (before logging init)
     let mut config = if cli.config.exists() {
-        info!("Loading configuration from {:?}", cli.config);
         Config::load(&cli.config).map_err(|e| {
-            error!("Failed to load config: {}", e);
+            eprintln!("Failed to load config: {}", e);
             anyhow::anyhow!("Configuration error: {}", e)
         })?
     } else {
-        warn!("Config file not found, using defaults");
+        eprintln!("Config file not found, using defaults");
         Config::default()
     };
 
@@ -95,12 +89,19 @@ async fn main() -> Result<()> {
     if let Some(data_dir) = cli.data_dir {
         config.storage.data_dir = data_dir;
     }
+    // Override log level if specified on CLI
+    if cli.log_level != "info" {
+        config.logging.level = cli.log_level.clone();
+    }
 
     // Validate configuration
     config.validate().map_err(|e| {
-        error!("Configuration validation failed: {}", e);
+        eprintln!("Configuration validation failed: {}", e);
         anyhow::anyhow!("Invalid configuration: {}", e)
     })?;
+
+    // Initialize logging after config is loaded and validated
+    init_logging(&config.logging)?;
 
     info!("Node ID: {}", config.node.id);
     info!("Node name: {}", config.node.name);
@@ -131,11 +132,14 @@ async fn main() -> Result<()> {
     // Wait for shutdown signal
     match wait_for_shutdown_signal().await {
         Ok(signal_name) => {
-            info!("Received {} signal, starting graceful shutdown", signal_name);
-        }
+            info!(
+                "Received {} signal, starting graceful shutdown",
+                signal_name
+            );
+        },
         Err(e) => {
             error!("Error waiting for shutdown signal: {}", e);
-        }
+        },
     }
 
     // Graceful shutdown with timeout
@@ -145,36 +149,65 @@ async fn main() -> Result<()> {
     match tokio::time::timeout(shutdown_timeout, server.shutdown()).await {
         Ok(Ok(())) => {
             info!("Server shut down gracefully");
-        }
+        },
         Ok(Err(e)) => {
             error!("Error during shutdown: {}", e);
             return Err(e);
-        }
+        },
         Err(_) => {
             error!("Shutdown timeout exceeded, forcing exit");
             return Err(anyhow::anyhow!("Shutdown timeout"));
-        }
+        },
     }
 
     info!("Anode server stopped");
     Ok(())
 }
 
-/// Initialize logging with the specified log level
-fn init_logging(log_level: &str) -> Result<()> {
-    let env_filter = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new(log_level))
-        .map_err(|e| anyhow::anyhow!("Invalid log level: {}", e))?;
+/// Initialize logging with structured JSON output support
+fn init_logging(logging_config: &config::LoggingConfig) -> Result<()> {
+    // Build the filter directive based on configuration
+    // Priority: RUST_LOG env var > module_levels > level
+    let env_filter = if let Ok(filter) = EnvFilter::try_from_default_env() {
+        // If RUST_LOG is set, use it directly
+        filter
+    } else if let Some(ref module_levels) = logging_config.module_levels {
+        // Use per-module configuration if provided
+        EnvFilter::try_new(module_levels)
+            .map_err(|e| anyhow::anyhow!("Invalid module log levels '{}': {}", module_levels, e))?
+    } else {
+        // Fall back to global level
+        EnvFilter::try_new(&logging_config.level)
+            .map_err(|e| anyhow::anyhow!("Invalid log level '{}': {}", logging_config.level, e))?
+    };
 
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_target(true)
-                .with_thread_ids(true)
-                .with_line_number(true)
-        )
-        .init();
+    if logging_config.json_format {
+        // JSON formatted logging for production
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_target(true)
+                    .with_thread_ids(true)
+                    .with_line_number(true)
+                    .with_current_span(true)
+                    .with_span_list(true)
+                    .flatten_event(true),
+            )
+            .init();
+    } else {
+        // Human-readable logging for development
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_target(true)
+                    .with_thread_ids(true)
+                    .with_line_number(true),
+            )
+            .init();
+    }
 
     Ok(())
 }

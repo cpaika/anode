@@ -3,13 +3,12 @@
 /// This module provides server-side copy functionality for S3 objects,
 /// allowing objects to be copied within the same bucket or across buckets
 /// without transferring data through the client.
-
 use crate::error::{S3Error, S3Result};
 use anode_protocol::ObjectKey;
 use anode_storage::StorageEngine;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Handler for object copy operations
@@ -37,10 +36,9 @@ impl CopyHandler {
     ) -> S3Result<CopyResult> {
         // Check conditional copy requirements
         if let Some(etag) = &options.copy_source_if_match {
-            let src_object_key = ObjectKey::new(source_bucket, source_key);
-            let data = self
+            let result = self
                 .storage
-                .get_object(&src_object_key)
+                .get_object(source_bucket, source_key)
                 .await
                 .map_err(|e| {
                     if matches!(e, anode_storage::StorageError::NotFound(_)) {
@@ -50,9 +48,14 @@ impl CopyHandler {
                     }
                 })?;
 
+            let data = match result {
+                Some((_, data)) => data,
+                None => return Err(S3Error::NoSuchKey(source_key.to_string())),
+            };
+
             // Get source metadata to check ETag
             // For now, we'll compute it from the data
-            let computed_etag = compute_etag(&data);
+            let computed_etag = compute_etag(&Bytes::from(data));
             let expected_etag = etag.trim_matches('"');
 
             if computed_etag != expected_etag {
@@ -61,10 +64,9 @@ impl CopyHandler {
         }
 
         if let Some(etag) = &options.copy_source_if_none_match {
-            let src_object_key = ObjectKey::new(source_bucket, source_key);
-            let data = self
+            let result = self
                 .storage
-                .get_object(&src_object_key)
+                .get_object(source_bucket, source_key)
                 .await
                 .map_err(|e| {
                     if matches!(e, anode_storage::StorageError::NotFound(_)) {
@@ -74,7 +76,12 @@ impl CopyHandler {
                     }
                 })?;
 
-            let computed_etag = compute_etag(&data);
+            let data = match result {
+                Some((_, data)) => data,
+                None => return Err(S3Error::NoSuchKey(source_key.to_string())),
+            };
+
+            let computed_etag = compute_etag(&Bytes::from(data));
             let expected_etag = etag.trim_matches('"');
 
             if computed_etag == expected_etag {
@@ -100,13 +107,22 @@ impl CopyHandler {
         options: CopyOptions,
     ) -> S3Result<CopyResult> {
         // Get source object
-        let data = self.storage.get_object(source).await.map_err(|e| {
-            if matches!(e, anode_storage::StorageError::NotFound(_)) {
-                S3Error::NoSuchKey(source.key.clone())
-            } else {
-                S3Error::StorageError(e)
-            }
-        })?;
+        let result = self
+            .storage
+            .get_object(&source.bucket, &source.key)
+            .await
+            .map_err(|e| {
+                if matches!(e, anode_storage::StorageError::NotFound(_)) {
+                    S3Error::NoSuchKey(source.key.clone())
+                } else {
+                    S3Error::StorageError(e)
+                }
+            })?;
+
+        let data = match result {
+            Some((_, data)) => Bytes::from(data),
+            None => return Err(S3Error::NoSuchKey(source.key.clone())),
+        };
 
         // Determine metadata to use
         let metadata = match options.metadata_directive {
@@ -114,15 +130,14 @@ impl CopyHandler {
                 // In a real implementation, we would retrieve the source object's metadata
                 // For now, we'll use an empty HashMap
                 None
-            }
+            },
             MetadataDirective::Replace => options.metadata,
         };
 
         // Store the copy at destination
-        let dest_object_key = ObjectKey::new(dest_bucket, dest_key);
         let manifest = self
             .storage
-            .put_object(dest_object_key, data, metadata)
+            .put_object(dest_bucket, dest_key, &data, metadata.unwrap_or_default())
             .await?;
 
         // Convert timestamp from i64 milliseconds to DateTime<Utc>
@@ -145,7 +160,7 @@ pub struct CopyOptions {
     /// COPY (preserve metadata) or REPLACE (use new metadata)
     pub metadata_directive: MetadataDirective,
     /// New metadata if REPLACE
-    pub metadata: Option<HashMap<String, String>>,
+    pub metadata: Option<BTreeMap<String, String>>,
     /// Conditional copy - only if source matches etag
     pub copy_source_if_match: Option<String>,
     /// Conditional copy - only if source doesn't match

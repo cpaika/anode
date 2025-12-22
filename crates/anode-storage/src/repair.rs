@@ -1,24 +1,20 @@
 use crate::blobs::BlobStore;
+use crate::chunks::ChunkId;
 use crate::error::{Result, StorageError};
 use crate::integrity::{CorruptedChunk, IntegrityReport, MissingChunk, RefCountError};
 use crate::metadata::MetadataStore;
-use anode_protocol::{ChunkId as ProtocolChunkId, NodeId};
+use anode_protocol::NodeId;
+use sha2::Digest;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
-
-// Local ChunkId type (String-based for storage layer)
-pub type ChunkId = crate::chunks::ChunkId;
+use tracing::{debug, info, warn};
 
 /// Placeholder cluster client for fetching chunks from other nodes
 /// In production, this would be the actual cluster client that can communicate with other nodes
 pub trait ClusterClient: Send + Sync {
     /// Fetch a chunk from a specific node
-    fn fetch_chunk_from_node(
-        &self,
-        chunk_id: &ChunkId,
-        node_id: NodeId,
-    ) -> Result<Option<Vec<u8>>>;
+    fn fetch_chunk_from_node(&self, chunk_id: &ChunkId, node_id: NodeId)
+        -> Result<Option<Vec<u8>>>;
 
     /// Find which nodes have a copy of a chunk
     fn find_chunk_replicas(&self, chunk_id: &ChunkId) -> Result<Vec<NodeId>>;
@@ -27,13 +23,13 @@ pub trait ClusterClient: Send + Sync {
 /// Mock cluster client for testing
 pub struct MockClusterClient {
     // In tests, we can populate this with test data
-    available_chunks: std::collections::HashMap<ChunkId, Vec<u8>>,
+    available_chunks: std::collections::BTreeMap<ChunkId, Vec<u8>>,
 }
 
 impl MockClusterClient {
     pub fn new() -> Self {
         Self {
-            available_chunks: std::collections::HashMap::new(),
+            available_chunks: std::collections::BTreeMap::new(),
         }
     }
 
@@ -118,11 +114,7 @@ pub enum RepairError {
 }
 
 impl<C: ClusterClient> RepairManager<C> {
-    pub fn new(
-        metadata: Arc<MetadataStore>,
-        blobs: Arc<BlobStore>,
-        cluster: Arc<C>,
-    ) -> Self {
+    pub fn new(metadata: Arc<MetadataStore>, blobs: Arc<BlobStore>, cluster: Arc<C>) -> Self {
         Self {
             metadata,
             blobs,
@@ -132,10 +124,7 @@ impl<C: ClusterClient> RepairManager<C> {
 
     /// Repair all issues found in integrity report
     pub async fn repair(&self, report: &IntegrityReport) -> Result<RepairResult> {
-        info!(
-            "Starting repair for {} issues",
-            report.total_issues()
-        );
+        info!("Starting repair for {} issues", report.total_issues());
         let start = Instant::now();
 
         let mut result = RepairResult::new();
@@ -149,7 +138,7 @@ impl<C: ClusterClient> RepairManager<C> {
                     result.chunks_repaired += 1;
                     result.bytes_transferred += bytes;
                     info!("Successfully repaired chunk: {}", corrupted.chunk_id);
-                }
+                },
                 Err(e) => {
                     result.chunks_failed += 1;
                     warn!("Failed to repair chunk {}: {}", corrupted.chunk_id, e);
@@ -157,7 +146,7 @@ impl<C: ClusterClient> RepairManager<C> {
                         chunk_id: corrupted.chunk_id.clone(),
                         error: e.to_string(),
                     });
-                }
+                },
             }
         }
 
@@ -170,7 +159,7 @@ impl<C: ClusterClient> RepairManager<C> {
                     result.chunks_repaired += 1;
                     result.bytes_transferred += bytes;
                     info!("Successfully rebuilt chunk: {}", missing.chunk_id);
-                }
+                },
                 Err(e) => {
                     result.chunks_failed += 1;
                     warn!("Failed to rebuild chunk {}: {}", missing.chunk_id, e);
@@ -178,7 +167,7 @@ impl<C: ClusterClient> RepairManager<C> {
                         chunk_id: missing.chunk_id.clone(),
                         error: e.to_string(),
                     });
-                }
+                },
             }
         }
 
@@ -193,10 +182,10 @@ impl<C: ClusterClient> RepairManager<C> {
                         "Fixed {} reference count errors",
                         report.reference_count_errors.len()
                     );
-                }
+                },
                 Err(e) => {
                     warn!("Failed to fix some reference counts: {}", e);
-                }
+                },
             }
         }
 
@@ -205,10 +194,10 @@ impl<C: ClusterClient> RepairManager<C> {
             match self.cleanup_orphans(&report.orphaned_chunks).await {
                 Ok(cleaned) => {
                     info!("Cleaned up {} orphaned chunks", cleaned);
-                }
+                },
                 Err(e) => {
                     warn!("Failed to cleanup some orphaned chunks: {}", e);
-                }
+                },
             }
         }
 
@@ -227,7 +216,10 @@ impl<C: ClusterClient> RepairManager<C> {
 
     /// Repair a single corrupted chunk by fetching from replica
     async fn repair_corrupted_chunk(&self, corrupted: &CorruptedChunk) -> Result<u64> {
-        debug!("Attempting to repair corrupted chunk: {}", corrupted.chunk_id);
+        debug!(
+            "Attempting to repair corrupted chunk: {}",
+            corrupted.chunk_id
+        );
 
         // Find available replicas
         let replicas = self.cluster.find_chunk_replicas(&corrupted.chunk_id)?;
@@ -264,21 +256,18 @@ impl<C: ClusterClient> RepairManager<C> {
                         );
                         return Ok(size);
                     } else {
-                        warn!(
-                            "Fetched chunk from node {} has invalid hash",
-                            node_id
-                        );
+                        warn!("Fetched chunk from node {} has invalid hash", node_id);
                     }
-                }
+                },
                 Ok(None) => {
-                    debug!("Node {} does not have chunk {}", node_id, corrupted.chunk_id);
-                }
-                Err(e) => {
-                    warn!(
-                        "Error fetching chunk from node {}: {}",
-                        node_id, e
+                    debug!(
+                        "Node {} does not have chunk {}",
+                        node_id, corrupted.chunk_id
                     );
-                }
+                },
+                Err(e) => {
+                    warn!("Error fetching chunk from node {}: {}", node_id, e);
+                },
             }
         }
 
@@ -331,21 +320,15 @@ impl<C: ClusterClient> RepairManager<C> {
                         );
                         return Ok(size);
                     } else {
-                        warn!(
-                            "Fetched chunk from node {} has invalid hash",
-                            node_id
-                        );
+                        warn!("Fetched chunk from node {} has invalid hash", node_id);
                     }
-                }
+                },
                 Ok(None) => {
                     debug!("Node {} does not have chunk {}", node_id, missing.chunk_id);
-                }
+                },
                 Err(e) => {
-                    warn!(
-                        "Error fetching chunk from node {}: {}",
-                        node_id, e
-                    );
-                }
+                    warn!("Error fetching chunk from node {}: {}", node_id, e);
+                },
             }
         }
 
@@ -383,27 +366,21 @@ impl<C: ClusterClient> RepairManager<C> {
                     for _ in 0..diff {
                         // Decrement will remove when reaching 0
                         match self.metadata.decrement_chunk_ref(&error.chunk_id) {
-                            Ok(_) => {}
+                            Ok(_) => {},
                             Err(e) => {
-                                warn!(
-                                    "Error decrementing ref count for {}: {}",
-                                    error.chunk_id, e
-                                );
+                                warn!("Error decrementing ref count for {}: {}", error.chunk_id, e);
                                 break;
-                            }
+                            },
                         }
                     }
                 } else {
                     for _ in 0..diff {
                         match self.metadata.decrement_chunk_ref(&error.chunk_id) {
-                            Ok(_) => {}
+                            Ok(_) => {},
                             Err(e) => {
-                                warn!(
-                                    "Error decrementing ref count for {}: {}",
-                                    error.chunk_id, e
-                                );
+                                warn!("Error decrementing ref count for {}: {}", error.chunk_id, e);
                                 break;
-                            }
+                            },
                         }
                     }
                 }
@@ -431,13 +408,13 @@ impl<C: ClusterClient> RepairManager<C> {
                 Ok(true) => {
                     cleaned += 1;
                     info!("Deleted orphaned chunk: {}", chunk_id);
-                }
+                },
                 Ok(false) => {
                     debug!("Orphaned chunk {} already deleted", chunk_id);
-                }
+                },
                 Err(e) => {
                     warn!("Failed to delete orphaned chunk {}: {}", chunk_id, e);
-                }
+                },
             }
         }
 
@@ -506,11 +483,18 @@ mod tests {
     use crate::chunks::compute_chunk_id;
     use crate::integrity::IntegrityChecker;
     use crate::metadata::{BucketConfig, MetadataStore};
-    use anode_protocol::{ObjectKey, ObjectManifest as ProtocolManifest};
+    use anode_protocol::{
+        ChunkId as ProtocolChunkId, ObjectKey, ObjectManifest as ProtocolManifest,
+    };
     use sha2::{Digest, Sha256};
     use tempfile::TempDir;
 
-    fn setup_test_env() -> (RepairManager<MockClusterClient>, Arc<MetadataStore>, Arc<BlobStore>, TempDir) {
+    fn setup_test_env() -> (
+        RepairManager<MockClusterClient>,
+        Arc<MetadataStore>,
+        Arc<BlobStore>,
+        TempDir,
+    ) {
         let temp_dir = TempDir::new().unwrap();
         let blob_dir = temp_dir.path().join("blobs");
         let metadata_path = temp_dir.path().join("metadata.db");
@@ -563,10 +547,7 @@ mod tests {
             actual_count: 3,
         };
 
-        repair_manager
-            .fix_reference_counts(&[error])
-            .await
-            .unwrap();
+        repair_manager.fix_reference_counts(&[error]).await.unwrap();
 
         let ref_count = metadata.get_chunk_ref_count(&chunk_id).unwrap();
         assert_eq!(ref_count, 3);
@@ -591,10 +572,7 @@ mod tests {
             actual_count: 2,
         };
 
-        repair_manager
-            .fix_reference_counts(&[error])
-            .await
-            .unwrap();
+        repair_manager.fix_reference_counts(&[error]).await.unwrap();
 
         let ref_count = metadata.get_chunk_ref_count(&chunk_id).unwrap();
         assert_eq!(ref_count, 2);
