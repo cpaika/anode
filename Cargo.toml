@@ -34,7 +34,7 @@ tower-http = { version = "0.6", features = ["trace", "cors"] }
 
 # gRPC and protobuf
 tonic = { version = "0.12", features = ["transport", "tls"] }
-tonic-build = "0.12"
+tonic-build = "0.14"
 prost = "0.13"
 prost-types = "0.13"
 
