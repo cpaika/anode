@@ -68,7 +68,7 @@ anode-storage = { path = "../crates/anode-storage" }
 anode-protocol = { path = "../crates/anode-protocol" }
 anode-client = { path = "../crates/anode-client" }
 anode-raft = { path = "../crates/anode-raft" }
-criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 tokio = { version = "1", features = ["full"] }
 rand = "0.8"
 tempfile = "3"

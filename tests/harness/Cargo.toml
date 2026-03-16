@@ -48,6 +48,6 @@ hdrhistogram = "7.5"
 # anode-protocol = { path = "../../crates/anode-protocol" }
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 proptest = "1.6"
 
