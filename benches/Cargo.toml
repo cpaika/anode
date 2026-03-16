@@ -79,7 +79,7 @@ tracing-subscriber = "0.3"
 sha2 = "0.10"
 openraft = { version = "0.9", features = ["serde", "storage-v2"] }
 bincode = "1"
-redb = "2"
+redb = "3"
 parking_lot = "0.12"
 
 [dev-dependencies]
