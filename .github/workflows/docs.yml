@@ -66,7 +66,7 @@ jobs:
           EOF
 
       - name: Upload documentation
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rustdoc
           path: target/doc/
