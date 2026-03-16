@@ -87,7 +87,7 @@ http-body-util = "0.1"
 
 # Configuration
 config = "0.14"
-toml = "0.8"
+toml = "1.0"
 
 # Async utilities
 futures = "0.3"
