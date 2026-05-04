@@ -235,7 +235,7 @@ jobs:
         run: cargo llvm-cov -p anode-storage -p anode-raft -p anode-s3 -p anode-protocol -p anode-parquet -p anode-client -p anode -p anode-test-harness -p anode-correctness-tests --all-features --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         with:
           files: lcov.info
           fail_ci_if_error: false
