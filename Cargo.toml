@@ -42,7 +42,7 @@ prost-types = "0.13"
 openraft = { version = "0.9", features = ["serde"] }
 
 # Storage
-redb = "2.1"
+redb = "4.1"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
