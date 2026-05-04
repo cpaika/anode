@@ -59,7 +59,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 
 # Cryptography
-sha2 = "0.10"
+sha2 = "0.11"
 blake3 = "1.5"
 
 # Utilities
