@@ -69,7 +69,7 @@ chrono = { version = "0.4", features = ["serde"] }
 url = "2.5"
 
 # Parquet and Arrow
-parquet = "53.0"
+parquet = "59.0"
 arrow = "53.0"
 arrow-array = "53.0"
 arrow-schema = "53.0"
