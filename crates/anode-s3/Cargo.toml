@@ -7,7 +7,7 @@ edition = "2021"
 axum = "0.8"
 hyper = "1.5"
 bytes = "1.8"
-quick-xml = { version = "0.37", features = ["serialize"] }
+quick-xml = { version = "0.41", features = ["serialize"] }
 base64 = { version = "0.22", features = ["std"] }
 hmac = "0.12"
 sha2 = "0.10"
