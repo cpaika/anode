@@ -61,7 +61,7 @@ jobs:
       - name: Download baseline benchmarks from main branch
         if: github.event_name == 'pull_request'
         continue-on-error: true
-        uses: dawidd6/action-download-artifact@v3
+        uses: dawidd6/action-download-artifact@v21
         with:
           workflow: bench.yml
           branch: ${{ github.base_ref }}
