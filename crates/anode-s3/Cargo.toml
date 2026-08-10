@@ -26,7 +26,7 @@ serde_json = "1.0"
 tower = { version = "0.5", features = ["util"] }
 tracing-subscriber = "0.3"
 tempfile = "3.0"
-md5 = "0.7"
+md5 = "0.8"
 proptest = "1.0"
 urlencoding = "2.1"
 arrow = "54.0"
