@@ -92,3 +92,7 @@ benches/target/
 # Local development
 .local/
 scratch/
+
+# draft_assistant.py runtime files
+players_cache.json
+draft_log.txt
