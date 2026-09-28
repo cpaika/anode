@@ -21,7 +21,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Docker API for container management
-bollard = "0.18"
+bollard = "0.21"
 
 # Error handling
 anyhow = "1.0"
