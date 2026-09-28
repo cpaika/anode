@@ -18,7 +18,7 @@ url = "2.5"
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
 async-trait = "0.1"
-quick-xml = { version = "0.36", features = ["serialize"] }
+quick-xml = { version = "0.42", features = ["serialize"] }
 md5 = "0.7"
 base64 = "0.22"
 tracing = "0.1"
