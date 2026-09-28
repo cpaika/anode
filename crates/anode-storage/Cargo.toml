@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-redb = "2.2"
+redb = "4.3"
 sha2 = "0.10"
 bytes = "1.8"
 thiserror = "2.0"
