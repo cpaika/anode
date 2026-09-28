@@ -52,7 +52,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Testing
-serial_test = "3"
+serial_test = "4"
 criterion = { version = "0.5", features = ["async_tokio"] }
 
 # Error handling
