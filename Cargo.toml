@@ -30,7 +30,7 @@ tokio = { version = "1.40", features = ["full"] }
 # Web framework
 axum = { version = "0.7", features = ["macros", "multipart"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["trace", "cors"] }
+tower-http = { version = "0.7", features = ["trace", "cors"] }
 
 # gRPC and protobuf
 tonic = { version = "0.12", features = ["transport", "tls"] }
