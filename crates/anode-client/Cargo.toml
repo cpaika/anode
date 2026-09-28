@@ -26,6 +26,6 @@ urlencoding = "2.1"
 
 [dev-dependencies]
 tempfile = "3.13"
-rand = "0.8"
+rand = "0.10"
 tokio-test = "0.4"
 uuid = { version = "1.10", features = ["v4"] }

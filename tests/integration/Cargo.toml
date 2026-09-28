@@ -42,7 +42,7 @@ aws-config = "1"
 aws-credential-types = "1"
 
 # Utilities
-rand = "0.8"
+rand = "0.10"
 tempfile = "3.14"
 bytes = "1.9"
 futures = "0.3"

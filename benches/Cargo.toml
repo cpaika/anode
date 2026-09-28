@@ -70,7 +70,7 @@ anode-client = { path = "../crates/anode-client" }
 anode-raft = { path = "../crates/anode-raft" }
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 tokio = { version = "1", features = ["full"] }
-rand = "0.8"
+rand = "0.10"
 tempfile = "3"
 bytes = "1"
 sysinfo = "0.30"
