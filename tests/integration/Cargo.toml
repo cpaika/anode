@@ -67,4 +67,4 @@ serde_json = "1.0"
 chrono = "0.4"
 
 # HTTP
-reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls-native-roots"] }
+reqwest = { version = "0.13", features = ["json", "stream", "rustls-tls-native-roots"] }
